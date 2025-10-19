@@ -16,13 +16,12 @@
 // DataCtrl Byte
 #define DATA_CONFIG_BIT     0x80
 #define DATA_EEPROM_BIT     0x40
-#define DATA_OPERATION_BIT  0x20
-#define DATA_SIGNAL_BIT     0x10
-#define DATA_DIRECTION_BIT  0x08
-#define DATA_TYPE_BIT       0x06
+#define DATA_OPERATION_BIT  0x30
+#define DATA_SIGNAL_BIT     0x08
+#define DATA_DIRECTION_BIT  0x04
+#define DATA_TYPE_BIT       0x03
 
 // ConfCtrl Byte Enums
-#define CONF_BITS                  0b00011111
 #define CONF_BUTTON_RISING_EDGE    0b00000000
 #define CONF_BUTTON_FALLIN_EDGE    0b00000001
 #define CONF_SWITCH                0b00000010
@@ -37,14 +36,18 @@
 #define CONF_BYPASS_ON_DISCONNECT  0b00001011
 
 // Protocol types
-#define TYPE_DIGITAL 0
-#define TYPE_ANALOG  1
-#define TYPE_OUTPUT  0
-#define TYPE_INPUT   1
-#define TYPE_BIT     0b00 // 00 = Bit
-#define TYPE_BYTE    0b01 // 01 = Byte (8-bit)
-#define TYPE_INT     0b10 // 10 = Integer (32-bit)
-#define TYPE_FLOAT   0b11 // 11 = Float
+#define TYPE_DIGITAL  0
+#define TYPE_ANALOG   1
+#define TYPE_OUTPUT   0
+#define TYPE_INPUT    1
+#define TYPE_BIT      0b00 // 00 = Bit
+#define TYPE_BYTE     0b01 // 01 = Byte (8-bit)
+#define TYPE_INT      0b10 // 10 = Integer (32-bit)
+#define TYPE_FLOAT    0b11 // 11 = Float
+#define TYPE_READ     0b00 // 00 = Read
+#define TYPE_WRITE    0b01 // 01 = Write
+#define TYPE_TOGGLE   0b10 // 10 = Toggle
+#define TYPE_RESERVED 0b11 // 11 = Reserved
 
 // Sizes
 #define SIZE_DEVICE_ADDRESS  5
@@ -168,24 +171,6 @@ void sendError(uint8_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uin
 	canWriteFrame(to, from, cc, dataCtrl, port, errCode);
 }
 
-uint32_t bitmapOutputDigitals() {
-	// 12 outputs → pack into lower bits of 32-bit
-	uint32_t data = 0;
-	for (int i = 0; i < SIZE_OUTPUT_DIGITAL; i++) {
-		data |= ((outputDigitals[i].value & 0x01) ? 1UL : 0UL) << i;
-	}
-	return data;
-}
-
-uint32_t bitmapInputDigitals() {
-	// 16 inputs → pack into lower 16 bits
-	uint32_t data = 0;
-	for (int i = 0; i < SIZE_INPUT_DIGITAL; i++) {
-		data |= ((inputDigitals[i].value & 0x01) ? 1UL : 0UL) << i;
-	}
-	return data;
-}
-
 // Change status of the output port
 void setDigitalOutput(uint8_t pin, uint8_t value, uint32_t setDelayOff) {
 	if (pin < SIZE_OUTPUT_DIGITAL) {
@@ -239,16 +224,16 @@ void canProcessFrame(const CAN_message_t& rx) {
 	bool isError       = (commCtrl & ERROR_BIT) >> 3;
 	
 	// Data control parameters
-	bool isConfig      = (dataCtrl & DATA_CONFIG_BIT) >> 7;
-	bool isWriteEEPROM = (dataCtrl & DATA_EEPROM_BIT) >> 6;
-	bool isAnalog      = (dataCtrl & DATA_SIGNAL_BIT) >> 5;
-	bool isWrite       = (dataCtrl & DATA_OPERATION_BIT) >> 4;
-	bool isInput       = (dataCtrl & DATA_DIRECTION_BIT) >> 3;
-	uint8_t dataType   = (dataCtrl & DATA_TYPE_BIT) >> 1;
+	bool isConfig         = (dataCtrl & DATA_CONFIG_BIT) >> 7;
+	bool isWriteEEPROM    = (dataCtrl & DATA_EEPROM_BIT) >> 6;
+	uint8_t operationType = (dataCtrl & DATA_OPERATION_BIT) >> 4;
+	bool isAnalog         = (dataCtrl & DATA_SIGNAL_BIT) >> 3;
+	bool isInput          = (dataCtrl & DATA_DIRECTION_BIT) >> 2;
+	uint8_t dataType      = (dataCtrl & DATA_TYPE_BIT);
 
 	// Discovery
 	// Return device address when asked to identify
-	if (rx.id == CAN_BCAST_ADDRES && isDiscovery && !isWrite && !isConfig) {
+	if (rx.id == CAN_BCAST_ADDRES && isDiscovery && operationType == TYPE_READ && !isConfig) {
 		sendAck(from, deviceId, DISCOVERY_BIT | ACK_BIT, TYPE_INT << 2, 0, FIRMWARE_VERSION);
 		return;
 	}
@@ -277,7 +262,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		// Get configuration
-		uint8_t conf = rx.buf[4] & CONF_BITS;
+		uint8_t conf = rx.buf[4];
 		// Get data from B6..B8
 		data = (((uint32_t)rx.buf[5] << 16) | ((uint32_t)rx.buf[6] << 8) | (uint32_t)rx.buf[7]);
 
@@ -293,43 +278,43 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		}
 
-		if (isWrite) {
+		if (operationType == TYPE_WRITE) {
 			switch (conf) {
 				case CONF_BUTTON_RISING_EDGE:
-					inputConfig[port - 1].isButtonRisingEdge = data > 0;
+					inputConfig[port].isButtonRisingEdge = data > 0;
 					break;
 				case CONF_BUTTON_FALLIN_EDGE:
-					inputConfig[port - 1].isButtonFallingEdge = data > 0;
+					inputConfig[port].isButtonFallingEdge = data > 0;
 					break;
 				case CONF_SWITCH:
-					inputConfig[port - 1].isSwitch = data > 0;
+					inputConfig[port].isSwitch = data > 0;
 					break;
 				case CONF_ACTION_TOGGLE:
-					inputConfig[port - 1].actionToggle = data;
+					inputConfig[port].actionToggle = data;
 					break;
 				case CONF_ACTION_HIGH:
-					inputConfig[port - 1].actionHigh = data;
+					inputConfig[port].actionHigh = data;
 					break;
 				case CONF_ACTION_LOW:
-					inputConfig[port - 1].actionLow = data;
+					inputConfig[port].actionLow = data;
 					break;
 				case CONF_DEBOUNCE:
-					inputConfig[port - 1].debounce = data;
+					inputConfig[port].debounce = data;
 					break;
 				case CONF_LONGPRESS:
-					inputConfig[port - 1].longpress = data;
+					inputConfig[port].longpress = data;
 					break;
 				case CONF_LONGPRESS_DELAYOFF:
-					inputConfig[port - 1].longpressDelayOff = data;
+					inputConfig[port].longpressDelayOff = data;
 					break;
 				case CONF_BYPASS_INSTANTLY:
-					inputConfig[port - 1].bypassInstantly = data > 0;
+					inputConfig[port].bypassInstantly = data > 0;
 					break;
 				case CONF_BYPASS_ON_DIP_SWITCH:
-					inputConfig[port - 1].bypassOnDIPSwitch = data > 0;
+					inputConfig[port].bypassOnDIPSwitch = data > 0;
 					break;
 				case CONF_BYPASS_ON_DISCONNECT:
-					inputConfig[port - 1].bypassOnDisconnect = data;
+					inputConfig[port].bypassOnDisconnect = data;
 					break;
 				default:
 					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
@@ -342,40 +327,40 @@ void canProcessFrame(const CAN_message_t& rx) {
 			uint32_t confData = 0x0;
 			switch (conf) {
 				case CONF_BUTTON_RISING_EDGE:
-					confData = inputConfig[port - 1].isButtonRisingEdge ? 1 : 0;
+					confData = inputConfig[port].isButtonRisingEdge ? 1 : 0;
 					break;
 				case CONF_BUTTON_FALLIN_EDGE:
-					confData = inputConfig[port - 1].isButtonFallingEdge ? 1 : 0;
+					confData = inputConfig[port].isButtonFallingEdge ? 1 : 0;
 					break;
 				case CONF_SWITCH:
-					confData = inputConfig[port - 1].isSwitch ? 1 : 0;
+					confData = inputConfig[port].isSwitch ? 1 : 0;
 					break;
 				case CONF_ACTION_TOGGLE:
-					confData = ((uint32_t)inputConfig[port - 1].actionToggle) & 0x00FFFFFFU;
+					confData = ((uint32_t)inputConfig[port].actionToggle) & 0x00FFFFFFU;
 					break;
 				case CONF_ACTION_HIGH:
-					confData = ((uint32_t)inputConfig[port - 1].actionHigh) & 0x00FFFFFFU;
+					confData = ((uint32_t)inputConfig[port].actionHigh) & 0x00FFFFFFU;
 					break;
 				case CONF_ACTION_LOW:
-					confData = ((uint32_t)inputConfig[port - 1].actionLow) & 0x00FFFFFFU;
+					confData = ((uint32_t)inputConfig[port].actionLow) & 0x00FFFFFFU;
 					break;
 				case CONF_DEBOUNCE:
-					confData = ((uint32_t)inputConfig[port - 1].debounce) & 0x00FFFFFFU;
+					confData = ((uint32_t)inputConfig[port].debounce) & 0x00FFFFFFU;
 					break;
 				case CONF_LONGPRESS:
-					confData = ((uint32_t)inputConfig[port - 1].longpress) & 0x00FFFFFFU;
+					confData = ((uint32_t)inputConfig[port].longpress) & 0x00FFFFFFU;
 					break;
 				case CONF_LONGPRESS_DELAYOFF:
-					confData = ((uint32_t)inputConfig[port - 1].longpressDelayOff) & 0x00FFFFFFU;
+					confData = ((uint32_t)inputConfig[port].longpressDelayOff) & 0x00FFFFFFU;
 					break;
 				case CONF_BYPASS_INSTANTLY:
-					confData = inputConfig[port - 1].bypassInstantly ? 1 : 0;
+					confData = inputConfig[port].bypassInstantly ? 1 : 0;
 					break;
 				case CONF_BYPASS_ON_DIP_SWITCH:
-					confData = inputConfig[port - 1].bypassOnDIPSwitch ? 1 : 0;
+					confData = inputConfig[port].bypassOnDIPSwitch ? 1 : 0;
 					break;
 				case CONF_BYPASS_ON_DISCONNECT:
-					confData = ((uint32_t)inputConfig[port - 1].bypassOnDisconnect) & 0x00FFFFFFU;
+					confData = ((uint32_t)inputConfig[port].bypassOnDisconnect) & 0x00FFFFFFU;
 					break;
 				default:
 					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
@@ -391,63 +376,61 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Command - data operation
 	if (isCommand) {
-		// Specific port (bit)
-		if (port == 0) {
-			if (isWrite) {
-				// Only allow writing to output ports
-				if (isInput == TYPE_INPUT) {
-					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
-					return;
-				}
-
-				// Write bitmap of values to output ports
-				for (int pin = 0; pin < SIZE_OUTPUT_DIGITAL; pin++) {
-					bool value = ((data >> pin) & 0x01) != 0;
-					setDigitalOutput(pin, value ? HIGH : LOW, 0);
-				}
-
-				// Send back updated set of values
-				sendAck(from, deviceId, commCtrl, dataCtrl, port, bitmapOutputDigitals());
-			} else {
-				// Send the set of digital input/output values
-				sendAck(from, deviceId, commCtrl, dataCtrl, port, (isInput == TYPE_INPUT) ? bitmapInputDigitals() : bitmapOutputDigitals());
+		if (operationType == TYPE_WRITE) {
+			// Only allow writing to output ports
+			if (isInput == TYPE_INPUT) {
+				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+				return;
 			}
-		} else {
-			// Single port
-			if (isWrite) {
-				// Only allow writing to output ports
-				if (isInput == TYPE_INPUT) {
-					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
-					return;
-				}
 
+			// Set output value
+			if (dataType == TYPE_BIT) {
 				// Write new value to output port
-				if (dataType == TYPE_BIT) {
-					setDigitalOutput(port-1, data & 0x01, 0);
-				} else if (dataType == TYPE_INT) {
-					// Set delay
-					setDigitalOutput(port-1, data > 0 ? HIGH : LOW, data);
-				} else {
-					sendError(from, deviceId, commCtrl, dataCtrl, port, dataType);
-					return;
-				}
-
-				// Send back updated set of digital input/output values
-				sendAck(from, deviceId, commCtrl, dataCtrl, port, data & 0x01);
+				setDigitalOutput(port, data & 0x01, 0);
+			} else if (dataType == TYPE_INT) {
+				// Set delayOff
+				setDigitalOutput(port, data > 0 ? HIGH : LOW, data);
 			} else {
-				// Send back digital input/output value
-				if (dataType == TYPE_BIT) {
-					sendAck(from, deviceId, commCtrl, dataCtrl, port, (isInput == TYPE_INPUT) ? inputDigitals[port-1].value : outputDigitals[port-1].value);
-				} else if (dataType == TYPE_BYTE) {
-					// TODO - TYPE_BYTE
-					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
-				} else if (dataType == TYPE_INT) {
-					// TODO - TYPE_INT
-					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
-				} else if (dataType == TYPE_FLOAT) {
-					// TODO - TYPE_FLOAT
-					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
-				}
+				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
+				return;
+			}
+
+			// Send back updated value
+			sendAck(from, deviceId, commCtrl, dataCtrl, port, outputDigitals[port].value + outputDigitals[port].delayOff);
+		} else if (operationType == TYPE_TOGGLE) {
+			// Only allow writing to output ports
+			if (isInput == TYPE_INPUT) {
+				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+				return;
+			}
+
+			// Toggle output value
+			if (dataType == TYPE_BIT) {
+				// Toggle value of output port
+				setDigitalOutput(port, outputDigitals[port].value == HIGH ? LOW : HIGH, 0);
+			} else if (dataType == TYPE_INT) {
+				// Set delayOff
+				setDigitalOutput(port, outputDigitals[port].value  == HIGH ? LOW : HIGH, data);
+			} else {
+				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
+				return;
+			}
+
+			// Send back updated value
+			sendAck(from, deviceId, commCtrl, dataCtrl, port, outputDigitals[port].value);
+		} else if (operationType == TYPE_READ) {
+			// Send back digital input/output value
+			if (dataType == TYPE_BIT) {
+				sendAck(from, deviceId, commCtrl, dataCtrl, port, (isInput == TYPE_INPUT) ? inputDigitals[port].value : outputDigitals[port].value);
+			} else if (dataType == TYPE_BYTE) {
+				// TODO - TYPE_BYTE
+				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
+			} else if (dataType == TYPE_INT) {
+				// TODO - TYPE_INT
+				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
+			} else if (dataType == TYPE_FLOAT) {
+				// TODO - TYPE_FLOAT
+				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
 			}
 		}
 	}
@@ -596,9 +579,8 @@ void loop() {
 			// Push event on input data changed
 			uint8_t commCtrl = 0x00;
 			uint8_t dataCtrl = DATA_DIRECTION_BIT | TYPE_BIT;
-			uint32_t payload = bitmapInputDigitals();
 			// Push to a broadcast address
-			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, i + 1, inputDigitals[i].value);
+			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, i, inputDigitals[i].value);
 		}
 	}
 
