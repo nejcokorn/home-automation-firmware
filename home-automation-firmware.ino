@@ -248,7 +248,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		// Return device firmware when asked to identify
-		sendAck(from, deviceId, DISCOVERY_BIT | ACK_BIT, TYPE_INT << 2, 0, FIRMWARE_VERSION);
+		sendAck(from, deviceId, commCtrl | ACK_BIT, TYPE_INT << 2, 0, FIRMWARE_VERSION);
 		return;
 	}
 
@@ -258,7 +258,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Do not answer. Acknowledge sent from another device
 			return;
 		}
-		if (rx.id != (uint16_t)(CAN_BASE_ADDRESS + deviceId) || rx.id != CAN_BCAST_ADDRES) {
+		if (!(rx.id == (uint16_t)(CAN_BASE_ADDRESS + deviceId) || rx.id == CAN_BCAST_ADDRES)) {
 			// Frame has to be sent to broadcast address or device address
 			return;
 		}
