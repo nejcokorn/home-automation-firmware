@@ -61,6 +61,7 @@
 #define ERR_CONFIG_NOT_ALLOWED    0x00000003UL
 #define ERR_INVALID_TYPE          0x00000004UL
 #define ERR_INVALID_PORT          0x00000005UL
+#define ERR_WRONG_ADDRESS         0x00000006UL
 
 // CAN setup
 STM32_CAN Can1(CAN_RX, CAN_TX);
@@ -232,28 +233,66 @@ void canProcessFrame(const CAN_message_t& rx) {
 	uint8_t dataType      = (dataCtrl & DATA_TYPE_BIT);
 
 	// Discovery
-	// Return device address when asked to identify
-	if (rx.id == CAN_BCAST_ADDRES && isDiscovery && operationType == TYPE_READ && !isConfig) {
+	if (isDiscovery) {
+		if (isAcknowledge) {
+			// Do not answer. Acknowledge sent from another device
+			return;
+		}
+		if (rx.id != CAN_BCAST_ADDRES) {
+			// Frame has to be sent to broadcast address
+			return;
+		}
+		if (operationType != TYPE_READ || isPing || isError || isConfig || isWriteEEPROM) {
+			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			return;
+		}
+
+		// Return device firmware when asked to identify
 		sendAck(from, deviceId, DISCOVERY_BIT | ACK_BIT, TYPE_INT << 2, 0, FIRMWARE_VERSION);
 		return;
 	}
 
-	// Ping - pong
-	if ((rx.id == (uint16_t)(CAN_BASE_ADDRESS + deviceId) || rx.id == CAN_BCAST_ADDRES) && isPing) {
-		lastSyncRemote = millis();
+	// Ping
+	if (isPing) {
+		if (isAcknowledge) {
+			// Do not answer. Acknowledge sent from another device
+			return;
+		}
+		if (rx.id != (uint16_t)(CAN_BASE_ADDRESS + deviceId) || rx.id != CAN_BCAST_ADDRES) {
+			// Frame has to be sent to broadcast address or device address
+			return;
+		}
+
+		if (operationType != TYPE_READ || isError || isConfig || isWriteEEPROM) {
+			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			return;
+		}
+
+		// Pong
 		sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, 0, 0);
+		return;
+	}	
+
+	// Only reply to the broadcast address on discovery or ping frames
+	if (rx.id == CAN_BCAST_ADDRES) {
+		// Do not sent out error in case future devices support other functionality
 		return;
 	}
 
-	// Only reply to the broadcast address on discovery or ping messages
-	if (rx.id == CAN_BCAST_ADDRES ) {
-		// TODO Error numbers
-		sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
+	// Only reply to the frames indended for this device
+	if (rx.id != (uint16_t)(CAN_BASE_ADDRESS + deviceId)) {
+		// Do not sent out error
 		return;
 	}
 
 	// Config
-	if (isCommand && isConfig && !isAnalog) {
+	if (isConfig) {
+		// Validate communication byte
+		if (!isCommand || isError) {
+			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			return;
+		}
+
 		// Write current configuration to EEPROM
 		if (isWriteEEPROM) {
 			EEPROM.put(0, inputConfig);
@@ -261,22 +300,22 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		}
 
-		// Get configuration
-		uint8_t conf = rx.buf[4];
-		// Get data from B6..B8
-		data = (((uint32_t)rx.buf[5] << 16) | ((uint32_t)rx.buf[6] << 8) | (uint32_t)rx.buf[7]);
-
-		// Validate input direction
-		if (!isInput) {
+		// Validate data config byte
+		if (!isInput || isAnalog) {
 			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 
 		// Validate port range
-		if (port == 0 || port > 16) {
+		if (port > 15) {
 			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_INVALID_PORT);
 			return;
 		}
+
+		// Get config option
+		uint8_t conf = rx.buf[4];
+		// Get data from B6..B8
+		data = (((uint32_t)rx.buf[5] << 16) | ((uint32_t)rx.buf[6] << 8) | (uint32_t)rx.buf[7]);
 
 		if (operationType == TYPE_WRITE) {
 			switch (conf) {
@@ -323,7 +362,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			}
 			sendAck(from, deviceId, commCtrl, dataCtrl, port, ((uint32_t)conf << 24) | data);
 			return;
-		} else {
+		} else if (operationType == TYPE_READ) {
 			uint32_t confData = 0x0;
 			switch (conf) {
 				case CONF_BUTTON_RISING_EDGE:
@@ -365,12 +404,18 @@ void canProcessFrame(const CAN_message_t& rx) {
 				default:
 					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 					return;
+					break;
 			}
 			sendAck(from, deviceId, commCtrl, dataCtrl, port, ((uint32_t)conf << 24) | confData);
 			return;
 		}
+
+		// Operation must be Read or Write
+		sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+		return;
 	}
 
+	// From this point frame is general command to read, write, toggle input/output ports
 	// Extract data from B5..B8
 	data = ((uint32_t)rx.buf[4] << 24) | ((uint32_t)rx.buf[5] << 16) | ((uint32_t)rx.buf[6] << 8) | (uint32_t)rx.buf[7];
 
@@ -434,6 +479,10 @@ void canProcessFrame(const CAN_message_t& rx) {
 			}
 		}
 	}
+
+	// No action could be taken based on the frame definition
+	sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+	return;
 }
 
 // Main function to setup stm32
