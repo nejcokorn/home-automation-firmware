@@ -173,16 +173,24 @@ void sendError(uint8_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uin
 }
 
 // Change status of the output port
-void setDigitalOutput(uint8_t pin, uint8_t value, uint32_t setDelayOff) {
-	if (pin < SIZE_OUTPUT_DIGITAL) {
-		digitalWrite(outputDigitalPins[pin], value);
-		outputDigitals[pin].value = value;
+void setDigitalOutput(uint8_t port, uint8_t value, uint32_t setDelayOff) {
+	if (port < SIZE_OUTPUT_DIGITAL) {
+		// If value has changed, push data change frame
+		if (outputDigitals[port].value != value){
+			uint8_t commCtrl = 0x00;
+			uint8_t dataCtrl = TYPE_BIT;
+			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, port, value);
+		}
+
+		// Do the actuall change
+		digitalWrite(outputDigitalPins[port], value);
+		outputDigitals[port].value = value;
 		if (value == LOW) {
 			// Reset delayOff
-			outputDigitals[pin].delayOff = 0;
+			outputDigitals[port].delayOff = 0;
 		} else {
 			// Set delayOff
-			outputDigitals[pin].delayOff = setDelayOff * 1000;
+			outputDigitals[port].delayOff = setDelayOff * 1000;
 		}
 	}
 }
