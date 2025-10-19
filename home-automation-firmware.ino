@@ -135,10 +135,10 @@ static inline void u32ToBytes(uint32_t source, uint8_t* target) {
 // Compute Device ID from DIP
 static inline uint8_t computeDeviceAddress() {
 	uint8_t id = 0;
-	for (int i = 0; i < SIZE_DEVICE_ADDRESS; i++) {
-		pinMode(deviceAddressPins[i], INPUT_PULLUP);
+	for (int pin = 0; pin < SIZE_DEVICE_ADDRESS; pin++) {
+		pinMode(deviceAddressPins[pin], INPUT_PULLUP);
 		// LOW means switch ON -> bit=1
-		id |= ((digitalRead(deviceAddressPins[i]) == LOW) ? 1 : 0) << i;
+		id |= ((digitalRead(deviceAddressPins[pin]) == LOW) ? 1 : 0) << pin;
 	}
 	return id;
 }
@@ -443,46 +443,46 @@ void setup() {
 	deviceId = computeDeviceAddress();
 
 	// Setup digital inputs
-	for (int i = 0; i < SIZE_INPUT_DIGITAL; i++) {
+	for (int inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
 		// external pull-ups/downs as designed
-		pinMode(inputDigitalPins[i], INPUT);
+		pinMode(inputDigitalPins[inputPort], INPUT);
 		
 		// Create object
 		InputDigital input{};
-		input.pin         = inputDigitalPins[i];
-		input.value       = digitalRead(inputDigitalPins[i]);
+		input.pin         = inputDigitalPins[inputPort];
+		input.value       = digitalRead(inputDigitalPins[inputPort]);
 		input.debounce    = 0;
 		input.pressedTime = 0;
-		inputDigitals[i] = input;
+		inputDigitals[inputPort] = input;
 	}
 
 	// Setup digital outputs
-	for (int i = 0; i < SIZE_OUTPUT_DIGITAL; i++) {
+	for (int outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
 		// Set ouput pin mode
-		pinMode(outputDigitalPins[i], OUTPUT);
+		pinMode(outputDigitalPins[outputPort], OUTPUT);
 		// Set default value as low
-		digitalWrite(outputDigitalPins[i], LOW);
+		digitalWrite(outputDigitalPins[outputPort], LOW);
 
 		OutputDigital output{};
-		output.pin      = outputDigitalPins[i];
+		output.pin      = outputDigitalPins[outputPort];
 		output.value    = 0;
 		output.delayOff = 0;
-		outputDigitals[i] = output;
+		outputDigitals[outputPort] = output;
 	}
 
 	// Setup configuration pins
-	for (int i = 0; i < 2; i++) {
-		pinMode(configurationPins[i], INPUT_PULLUP);
+	for (int pin = 0; pin < 2; pin++) {
+		pinMode(configurationPins[pin], INPUT_PULLUP);
 	}
 
 	// Read input device configuration from EEPROM
 	EEPROM.get(0, inputConfig);
 	// Initialize only the first time
-	for (int i=0; i < SIZE_INPUT_DIGITAL; i++) {
-		if (inputConfig[i].version != FIRMWARE_VERSION) {
+	for (int inputPort=0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
+		if (inputConfig[inputPort].version != FIRMWARE_VERSION) {
 			ConfigRegister def{};
-			inputConfig[i] = def;
-			resetDigitalInputConf(i);
+			inputConfig[inputPort] = def;
+			resetDigitalInputConf(inputPort);
 		}
 	}
 
@@ -512,65 +512,65 @@ void loop() {
 	dipSwitchBypass = digitalRead(C_02) == LOW ? true : false;
 
 	// Scan inputs and detect changes (for potential push events)
-	for (int i = 0; i < SIZE_INPUT_DIGITAL; i++) {
+	for (int inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
 		bool inputChanged = false;
-		uint8_t currentValue = digitalRead(inputDigitalPins[i]) == HIGH ? 0 : 1;
+		uint8_t currentValue = digitalRead(inputDigitalPins[inputPort]) == HIGH ? 0 : 1;
 
-		if (inputConfig[i].debounce == 0) {
+		if (inputConfig[inputPort].debounce == 0) {
 			// Without debounce logic
-			if (currentValue != inputDigitals[i].value) {
-				inputDigitals[i].value = currentValue;
+			if (currentValue != inputDigitals[inputPort].value) {
+				inputDigitals[inputPort].value = currentValue;
 				inputChanged = true;
 			}
 		} else {
 			// With debounce logic
-			inputDigitals[i].debounce += (currentValue == HIGH ? 1 : -1) * loopTimeDiff;
-			if (inputDigitals[i].debounce > inputConfig[i].debounce) {
-				inputDigitals[i].debounce = inputConfig[i].debounce;
-			} else if (inputDigitals[i].debounce < 0) {
-				inputDigitals[i].debounce = 0;
+			inputDigitals[inputPort].debounce += (currentValue == HIGH ? 1 : -1) * loopTimeDiff;
+			if (inputDigitals[inputPort].debounce > inputConfig[inputPort].debounce) {
+				inputDigitals[inputPort].debounce = inputConfig[inputPort].debounce;
+			} else if (inputDigitals[inputPort].debounce < 0) {
+				inputDigitals[inputPort].debounce = 0;
 			}
 
 			// Debounce to logical values
-			if (inputDigitals[i].debounce == inputConfig[i].debounce && inputDigitals[i].value == LOW) {
-				inputDigitals[i].value = HIGH;
+			if (inputDigitals[inputPort].debounce == inputConfig[inputPort].debounce && inputDigitals[inputPort].value == LOW) {
+				inputDigitals[inputPort].value = HIGH;
 				inputChanged = true;
-			} else if (inputDigitals[i].debounce == 0 && inputDigitals[i].value == HIGH) {
-				inputDigitals[i].value = LOW;
+			} else if (inputDigitals[inputPort].debounce == 0 && inputDigitals[inputPort].value == HIGH) {
+				inputDigitals[inputPort].value = LOW;
 				inputChanged = true;
 			}
 		}
 
 		// Take bypass actions
 		if (inputChanged) {
-			if (inputConfig[i].bypassInstantly == true
-				|| inputConfig[i].bypassOnDisconnect != 0 && millis() - lastSyncRemote > inputConfig[i].bypassOnDisconnect
-				|| dipSwitchBypass && inputConfig[i].bypassOnDIPSwitch == true) {
+			if (inputConfig[inputPort].bypassInstantly == true
+				|| inputConfig[inputPort].bypassOnDisconnect != 0 && millis() - lastSyncRemote > inputConfig[inputPort].bypassOnDisconnect
+				|| dipSwitchBypass && inputConfig[inputPort].bypassOnDIPSwitch == true) {
 				// Bypass master decisions
-				if ((inputConfig[i].isButtonRisingEdge && inputDigitals[i].value == HIGH) || (inputConfig[i].isButtonFallingEdge && inputDigitals[i].value == LOW)) {
+				if ((inputConfig[inputPort].isButtonRisingEdge && inputDigitals[inputPort].value == HIGH) || (inputConfig[inputPort].isButtonFallingEdge && inputDigitals[inputPort].value == LOW)) {
 					// Toggle all matching output ports
-					for (uint8_t pin = 0; pin < SIZE_OUTPUT_DIGITAL; pin++) {
-						if (inputConfig[i].actionLow & (1 << pin)) {
-							setDigitalOutput(pin, LOW, 0);
+					for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
+						if (inputConfig[inputPort].actionLow & (1 << outputPort)) {
+							setDigitalOutput(outputPort, LOW, 0);
 						}
-						if (inputConfig[i].actionToggle & (1 << pin)) {
-							setDigitalOutput(pin, outputDigitals[pin].value == HIGH ? LOW : HIGH, inputConfig[i].longpressDelayOff);
+						if (inputConfig[inputPort].actionToggle & (1 << outputPort)) {
+							setDigitalOutput(outputPort, outputDigitals[outputPort].value == HIGH ? LOW : HIGH, inputConfig[inputPort].longpressDelayOff);
 						}
-						if (inputConfig[i].actionHigh & (1 << pin)) {
-							setDigitalOutput(pin, HIGH, inputConfig[i].longpressDelayOff);
+						if (inputConfig[inputPort].actionHigh & (1 << outputPort)) {
+							setDigitalOutput(outputPort, HIGH, inputConfig[inputPort].longpressDelayOff);
 						}
 					}
-				} else if (inputConfig[i].isSwitch) {
+				} else if (inputConfig[inputPort].isSwitch) {
 					// Set all matching outputs to the input value
-					for (uint8_t pin = 0; pin < SIZE_OUTPUT_DIGITAL; pin++) {
-						if (inputConfig[i].actionLow & (1 << pin)) {
-							setDigitalOutput(pin, LOW, 0);
+					for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
+						if (inputConfig[inputPort].actionLow & (1 << outputPort)) {
+							setDigitalOutput(outputPort, LOW, 0);
 						}
-						if (inputConfig[i].actionToggle & (1 << pin)) {
-							setDigitalOutput(pin, inputDigitals[i].value == HIGH ? HIGH : LOW, inputConfig[i].longpressDelayOff);
+						if (inputConfig[inputPort].actionToggle & (1 << outputPort)) {
+							setDigitalOutput(outputPort, inputDigitals[inputPort].value == HIGH ? HIGH : LOW, inputConfig[inputPort].longpressDelayOff);
 						}
-						if (inputConfig[i].actionHigh & (1 << pin)) {
-							setDigitalOutput(pin, HIGH, inputConfig[i].longpressDelayOff);
+						if (inputConfig[inputPort].actionHigh & (1 << outputPort)) {
+							setDigitalOutput(outputPort, HIGH, inputConfig[inputPort].longpressDelayOff);
 						}
 					}
 				}	
@@ -580,19 +580,19 @@ void loop() {
 			uint8_t commCtrl = 0x00;
 			uint8_t dataCtrl = DATA_DIRECTION_BIT | TYPE_BIT;
 			// Push to a broadcast address
-			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, i, inputDigitals[i].value);
+			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].value);
 		}
 	}
 
 	// Watch for delay off timers on ouputs
-	for (int8_t pin = 0; pin < SIZE_OUTPUT_DIGITAL; pin++) {
-		if (outputDigitals[pin].delayOff > 0) {
-			// Dedcut time from the output pin
-			outputDigitals[pin].delayOff -= loopTimeDiff;
+	for (int8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
+		if (outputDigitals[outputPort].delayOff > 0) {
+			// Dedcut time from the output port
+			outputDigitals[outputPort].delayOff -= loopTimeDiff;
 
 			// Switch off 
-			if (outputDigitals[pin].delayOff <= 0) {
-				setDigitalOutput(pin, LOW, 0);
+			if (outputDigitals[outputPort].delayOff <= 0) {
+				setDigitalOutput(outputPort, LOW, 0);
 			}
 		}
 	}
