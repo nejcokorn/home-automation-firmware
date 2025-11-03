@@ -309,6 +309,11 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Config
 	if (isConfig) {
+		// Get config options
+		uint8_t conf = rx.buf[4];
+		// Get data from B6..B8
+		data = (((uint32_t)rx.buf[5] << 16) | ((uint32_t)rx.buf[6] << 8) | (uint32_t)rx.buf[7]);
+
 		// Validate communication byte
 		if (!isCommand || isError) {
 			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
@@ -317,7 +322,9 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 		// Write current configuration to EEPROM
 		if (isWriteEEPROM) {
-			EEPROM.put(0, inputConfig);
+			// Store single input config
+			// TODO data between 0 and 16 !!!
+			EEPROM.put(sizeof(ConfigRegister) * data, inputConfig[data]);
 			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, data);
 			return;
 		}
@@ -616,10 +623,10 @@ void setup() {
 		pinMode(configurationPins[pin], INPUT_PULLUP);
 	}
 
-	// Read input device configuration from EEPROM
-	EEPROM.get(0, inputConfig);
-	// Initialize only the first time
 	for (int inputPort=0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
+		// Read input device configuration from EEPROM
+		EEPROM.get(sizeof(ConfigRegister) * inputPort, inputConfig[inputPort]);
+		// Initialize only when version is different
 		if (inputConfig[inputPort].version != FIRMWARE_VERSION) {
 			ConfigRegister def{};
 			inputConfig[inputPort] = def;
