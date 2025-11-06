@@ -781,9 +781,4 @@ void loop() {
 			}
 		}
 	}
-
-	// TODO remove
-	// canWriteFrame(0xFF, deviceId, 0x0, 0x0, 0x0, EEPROM.length()); 
-	// canWriteFrame(0xFF, deviceId, 0x0, 0x0, 0x0, sizeof(ConfigRegister) * 16);
-	
 }
