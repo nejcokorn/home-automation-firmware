@@ -707,10 +707,10 @@ void loop() {
 				|| inputConfig[inputPort].bypassOnDisconnect != 0 && millis() - lastSyncRemote > inputConfig[inputPort].bypassOnDisconnect
 				|| dipSwitchBypass && inputConfig[inputPort].bypassOnDIPSwitch == true) {
 				// Bypass master decisions
-				if ((inputConfig[inputPort].isButtonRisingEdge && inputDigitals[inputPort].value == HIGH) || (inputConfig[inputPort].isButtonFallingEdge && inputDigitals[inputPort].value == LOW)) {
+				if (inputConfig[inputPort].isSwitch || (inputConfig[inputPort].isButtonRisingEdge && inputDigitals[inputPort].value == HIGH) || (inputConfig[inputPort].isButtonFallingEdge && inputDigitals[inputPort].value == LOW)) {
 					// Toggle all matching output ports
+					// Action low outputs
 					for (uint8_t gridDevIdx = 0; gridDevIdx < SIZE_GRID; gridDevIdx++) {
-						// Action low outputs
 						if (inputConfig[inputPort].actionLow[gridDevIdx].deviceId != 0xFF) {
 							for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
 								if (inputConfig[inputPort].actionLow[gridDevIdx].ports & (1 << outputPort)) {
@@ -721,10 +721,12 @@ void loop() {
 										// Send command to change output port on deviceId 
 										canWriteFrame(inputConfig[inputPort].actionLow[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, 0);
 									}
+									}
 								}
 							}
 						}
 						// Action toggle outputs
+					for (uint8_t gridDevIdx = 0; gridDevIdx < SIZE_GRID; gridDevIdx++) {
 						if (inputConfig[inputPort].actionToggle[gridDevIdx].deviceId != 0xFF) {
 							for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
 								if (inputConfig[inputPort].actionToggle[gridDevIdx].ports & (1 << outputPort)) {
@@ -735,10 +737,12 @@ void loop() {
 										// Send command to change output port on deviceId 
 										canWriteFrame(inputConfig[inputPort].actionToggle[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_TOGGLE << 4, outputPort, inputConfig[inputPort].longpressDelayOff);
 									}
+									}
 								}
 							}
 						}
 						// Action high outputs
+					for (uint8_t gridDevIdx = 0; gridDevIdx < SIZE_GRID; gridDevIdx++) {
 						if (inputConfig[inputPort].actionHigh[gridDevIdx].deviceId != 0xFF) {
 							for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
 								if (inputConfig[inputPort].actionHigh[gridDevIdx].ports & (1 << outputPort)) {
@@ -757,19 +761,6 @@ void loop() {
 							}
 						}
 					}
-				} else if (inputConfig[inputPort].isSwitch) {
-					// Set all matching outputs to the input value
-					// for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
-					// 	if (inputConfig[inputPort].actionLow & (1 << outputPort)) {
-					// 		setDigitalOutput(outputPort, LOW, 0);
-					// 	}
-					// 	if (inputConfig[inputPort].actionToggle & (1 << outputPort)) {
-					// 		setDigitalOutput(outputPort, inputDigitals[inputPort].value == HIGH ? HIGH : LOW, inputConfig[inputPort].longpressDelayOff);
-					// 	}
-					// 	if (inputConfig[inputPort].actionHigh & (1 << outputPort)) {
-					// 		setDigitalOutput(outputPort, HIGH, inputConfig[inputPort].longpressDelayOff);
-					// 	}
-					// }
 				}
 			}
 
