@@ -97,7 +97,7 @@ InputDigital inputDigitals[SIZE_INPUT_DIGITAL];
 struct OutputDigital {
 	uint8_t pin;
 	uint8_t value;
-	int64_t delayOff;
+	int64_t delayLow;
 };
 OutputDigital outputDigitals[SIZE_OUTPUT_DIGITAL];
 
@@ -116,7 +116,7 @@ struct ConfigRegister {
 	ActionMap actionLow[SIZE_GRID]; // Switch off output ports in bitmap
 	int32_t debounce; // Debounce in microseconds
 	int32_t longpress; // Debounce in microseconds
-	int32_t longpressDelayOff; // Debounce in microseconds
+	int32_t longpressDelayLow; // Debounce in microseconds
 	bool bypassInstantly;
 	bool bypassOnDIPSwitch;
 	int32_t bypassOnDisconnect; // bypess after x miliseconds from last ping
@@ -184,7 +184,7 @@ void sendError(uint8_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uin
 }
 
 // Change status of the output port
-void setDigitalOutput(uint8_t port, uint8_t value, uint32_t setDelayOff) {
+void setDigitalOutput(uint8_t port, uint8_t value, uint32_t setDelayLow) {
 	if (port < SIZE_OUTPUT_DIGITAL) {
 		// If value has changed, push data change frame
 		if (outputDigitals[port].value != value){
@@ -197,11 +197,11 @@ void setDigitalOutput(uint8_t port, uint8_t value, uint32_t setDelayOff) {
 		digitalWrite(outputDigitalPins[port], value);
 		outputDigitals[port].value = value;
 		if (value == LOW) {
-			// Reset delayOff
-			outputDigitals[port].delayOff = 0;
+			// Reset delayLow
+			outputDigitals[port].delayLow = 0;
 		} else {
-			// Set delayOff
-			outputDigitals[port].delayOff = setDelayOff * 1000;
+			// Set delayLow
+			outputDigitals[port].delayLow = setDelayLow * 1000;
 		}
 	}
 }
@@ -222,7 +222,7 @@ void resetDigitalInputConf(uint8_t port) {
 	}
 	inputConfig[port].debounce            = 0;
 	inputConfig[port].longpress           = 0;
-	inputConfig[port].longpressDelayOff   = 0;
+	inputConfig[port].longpressDelayLow   = 0;
 	inputConfig[port].bypassInstantly     = false;
 	inputConfig[port].bypassOnDIPSwitch   = false;
 	inputConfig[port].bypassOnDisconnect  = 0;
@@ -446,7 +446,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 					inputConfig[port].longpress = data;
 					break;
 				case CONF_LONGPRESS_DELAYLOW:
-					inputConfig[port].longpressDelayOff = data;
+					inputConfig[port].longpressDelayLow = data;
 					break;
 				case CONF_BYPASS_INSTANTLY:
 					inputConfig[port].bypassInstantly = data > 0;
@@ -504,7 +504,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 					confData = ((uint32_t)inputConfig[port].longpress) & 0x00FFFFFFU;
 					break;
 				case CONF_LONGPRESS_DELAYLOW:
-					confData = ((uint32_t)inputConfig[port].longpressDelayOff) & 0x00FFFFFFU;
+					confData = ((uint32_t)inputConfig[port].longpressDelayLow) & 0x00FFFFFFU;
 					break;
 				case CONF_BYPASS_INSTANTLY:
 					confData = inputConfig[port].bypassInstantly ? 1 : 0;
@@ -547,7 +547,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 				// Write new value to output port
 				setDigitalOutput(port, data & 0x01, 0);
 			} else if (dataType == TYPE_INT) {
-				// Set delayOff
+				// Set delayLow
 				setDigitalOutput(port, data > 0 ? HIGH : LOW, data);
 			} else {
 				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
@@ -555,7 +555,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			}
 
 			// Send back updated value
-			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, outputDigitals[port].value + outputDigitals[port].delayOff);
+			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, outputDigitals[port].value + outputDigitals[port].delayLow);
 		} else if (operationType == TYPE_TOGGLE) {
 			// Only allow writing to output ports
 			if (isInput == TYPE_INPUT) {
@@ -568,7 +568,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 				// Toggle value of output port
 				setDigitalOutput(port, outputDigitals[port].value == HIGH ? LOW : HIGH, 0);
 			} else if (dataType == TYPE_INT) {
-				// Set delayOff
+				// Set delayLow
 				setDigitalOutput(port, outputDigitals[port].value  == HIGH ? LOW : HIGH, data);
 			} else {
 				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
@@ -630,7 +630,7 @@ void setup() {
 		OutputDigital output{};
 		output.pin      = outputDigitalPins[outputPort];
 		output.value    = 0;
-		output.delayOff = 0;
+		output.delayLow = 0;
 		outputDigitals[outputPort] = output;
 	}
 
@@ -793,17 +793,17 @@ void loop() {
 				|| inputConfig[inputPort].bypassOnDisconnect != 0 && millis() - lastSyncRemote > inputConfig[inputPort].bypassOnDisconnect
 				|| dipSwitchBypass && inputConfig[inputPort].bypassOnDIPSwitch == true) {
 
-				// Action high outputs with delayoff
+				// Action high outputs with delayLow
 				for (uint8_t gridDevIdx = 0; gridDevIdx < SIZE_GRID; gridDevIdx++) {
 					if (inputConfig[inputPort].actionHigh[gridDevIdx].deviceId != 0xFF) {
 						for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
 							if (inputConfig[inputPort].actionHigh[gridDevIdx].ports & (1 << outputPort)) {
 								if (inputConfig[inputPort].actionHigh[gridDevIdx].deviceId == deviceId) {
 									// Change value of local output port
-									setDigitalOutput(outputPort, HIGH, inputConfig[inputPort].longpressDelayOff);
+									setDigitalOutput(outputPort, HIGH, inputConfig[inputPort].longpressDelayLow);
 								} else {
 									// Send command to change output port on deviceId
-									canWriteFrame(inputConfig[inputPort].actionHigh[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4 | TYPE_BYTE, outputPort, inputConfig[inputPort].longpressDelayOff);
+									canWriteFrame(inputConfig[inputPort].actionHigh[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4 | TYPE_BYTE, outputPort, inputConfig[inputPort].longpressDelayLow);
 								}
 							}
 						}
@@ -815,12 +815,12 @@ void loop() {
 
 	// Watch for delay off timers on ouputs
 	for (int8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
-		if (outputDigitals[outputPort].delayOff > 0) {
+		if (outputDigitals[outputPort].delayLow > 0) {
 			// Dedcut time from the output port
-			outputDigitals[outputPort].delayOff -= loopTimeDiff;
+			outputDigitals[outputPort].delayLow -= loopTimeDiff;
 
 			// Switch off 
-			if (outputDigitals[outputPort].delayOff <= 0) {
+			if (outputDigitals[outputPort].delayLow <= 0) {
 				setDigitalOutput(outputPort, LOW, 0);
 			}
 		}
