@@ -750,10 +750,10 @@ void loop() {
 								if (inputConfig[inputPort].actionToggle[gridDevIdx].ports & (1 << outputPort)) {
 									if (inputConfig[inputPort].actionToggle[gridDevIdx].deviceId == deviceId) {
 										// Change value of local output port
-										setDigitalOutput(outputPort, outputDigitals[outputPort].value == HIGH ? LOW : HIGH, inputConfig[inputPort].longpressDelayOff);
+										setDigitalOutput(outputPort, outputDigitals[outputPort].value == HIGH ? LOW : HIGH, 0);
 									} else {
 										// Send command to change output port on deviceId 
-										canWriteFrame(inputConfig[inputPort].actionToggle[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_TOGGLE << 4, outputPort, inputConfig[inputPort].longpressDelayOff);
+										canWriteFrame(inputConfig[inputPort].actionToggle[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_TOGGLE << 4, outputPort, 0);
 									}
 								}
 							}
@@ -766,14 +766,10 @@ void loop() {
 								if (inputConfig[inputPort].actionHigh[gridDevIdx].ports & (1 << outputPort)) {
 									if (inputConfig[inputPort].actionHigh[gridDevIdx].deviceId == deviceId) {
 										// Change value of local output port
-										setDigitalOutput(outputPort, HIGH, inputConfig[inputPort].longpressDelayOff);
+										setDigitalOutput(outputPort, HIGH), 0;
 									} else {
 										// Send command to change output port on deviceId
-										if (inputConfig[inputPort].longpressDelayOff) {
-											canWriteFrame(inputConfig[inputPort].actionHigh[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4 | TYPE_BYTE, outputPort, inputConfig[inputPort].longpressDelayOff);
-										} else {
-											canWriteFrame(inputConfig[inputPort].actionHigh[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, HIGH);
-										}
+										canWriteFrame(inputConfig[inputPort].actionHigh[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, HIGH);
 									}
 								}
 							}
