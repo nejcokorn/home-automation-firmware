@@ -766,7 +766,7 @@ void loop() {
 								if (inputConfig[inputPort].actionHigh[gridDevIdx].ports & (1 << outputPort)) {
 									if (inputConfig[inputPort].actionHigh[gridDevIdx].deviceId == deviceId) {
 										// Change value of local output port
-										setDigitalOutput(outputPort, HIGH), 0;
+										setDigitalOutput(outputPort, HIGH, 0);
 									} else {
 										// Send command to change output port on deviceId
 										canWriteFrame(inputConfig[inputPort].actionHigh[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, HIGH);
