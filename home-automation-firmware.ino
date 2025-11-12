@@ -59,7 +59,7 @@
 #define SIZE_INPUT_DIGITAL   16
 #define SIZE_INPUT_ANALOG    4
 #define SIZE_OUTPUT_DIGITAL  12
-#define SIZE_GRID            8
+#define SIZE_ACTION_MAP      128
 
 // Error codes (packed in Data on error/ack)
 #define ERR_UNKNOWN               0x00000001UL
@@ -74,6 +74,8 @@ STM32_CAN Can1(CAN_RX, CAN_TX, RX_SIZE_512, TX_SIZE_512);
 
 #define CAN_BASE_ADDRESS 0x000
 #define CAN_BCAST_ADDRES 0x7FF // broadcast frame receiver
+
+uint32_t firmwareVersion;
 
 // Logical device identity
 uint8_t deviceId = 0;
@@ -102,18 +104,15 @@ struct OutputDigital {
 OutputDigital outputDigitals[SIZE_OUTPUT_DIGITAL];
 
 struct ActionMap {
+	uint8_t inputPort;
 	uint8_t deviceId;
 	uint16_t ports;
 };
 
 struct ConfigRegister {
-	int32_t version;
 	bool isButtonRisingEdge;
 	bool isButtonFallingEdge;
 	bool isSwitch;
-	ActionMap actionToggle[SIZE_GRID]; // Toggle output ports in bitmap
-	ActionMap actionHigh[SIZE_GRID]; // Switch on output ports in bitmap
-	ActionMap actionLow[SIZE_GRID]; // Switch off output ports in bitmap
 	int32_t debounce; // Debounce in microseconds
 	int32_t longpress; // Debounce in microseconds
 	int32_t longpressDelayLow; // Debounce in microseconds
@@ -123,7 +122,10 @@ struct ConfigRegister {
 };
 
 // Set configuration for each input pin
-ConfigRegister inputConfig[SIZE_INPUT_DIGITAL] = {0};
+ConfigRegister inputConfig[SIZE_INPUT_DIGITAL];
+ActionMap actionToggle[SIZE_ACTION_MAP]; // Toggle output ports in bitmap
+ActionMap actionHigh[SIZE_ACTION_MAP]; // Switch on output ports in bitmap
+ActionMap actionLow[SIZE_ACTION_MAP]; // Switch off output ports in bitmap
 
 // Global variables
 int32_t loopTimeDiff = 0;
@@ -206,26 +208,87 @@ void setDigitalOutput(uint8_t port, uint8_t value, uint32_t setDelayLow) {
 	}
 }
 
-void resetDigitalInputConf(uint8_t port) {
-	
-	inputConfig[port].version             = FIRMWARE_VERSION;
-	inputConfig[port].isButtonRisingEdge  = false;
-	inputConfig[port].isButtonFallingEdge = false;
-	inputConfig[port].isSwitch            = false;
-	for (uint8_t i = 0; i < SIZE_GRID; i++){
-		inputConfig[port].actionToggle[i].deviceId = 0xFF;
-		inputConfig[port].actionToggle[i].ports    = 0;
-		inputConfig[port].actionHigh[i].deviceId   = 0xFF;
-		inputConfig[port].actionHigh[i].ports      = 0;
-		inputConfig[port].actionLow[i].deviceId    = 0xFF;
-		inputConfig[port].actionLow[i].ports       = 0;
+void resetConfig() {
+	// Reset input configuration
+	for (uint8_t inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
+		ConfigRegister config{};
+		config.isButtonRisingEdge  = false;
+		config.isButtonFallingEdge = false;
+		config.isSwitch            = false;
+		config.debounce            = 0;
+		config.longpress           = 0;
+		config.longpressDelayLow   = 0;
+		config.bypassInstantly     = false;
+		config.bypassOnDIPSwitch   = false;
+		config.bypassOnDisconnect  = 0;
+		inputConfig[inputPort] = config;
 	}
-	inputConfig[port].debounce            = 0;
-	inputConfig[port].longpress           = 0;
-	inputConfig[port].longpressDelayLow   = 0;
-	inputConfig[port].bypassInstantly     = false;
-	inputConfig[port].bypassOnDIPSwitch   = false;
-	inputConfig[port].bypassOnDisconnect  = 0;
+
+	// Reset Action maps
+	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
+		actionToggle[i].inputPort = 0xFF;
+		actionToggle[i].deviceId  = 0xFF;
+		actionToggle[i].ports     = 0;
+		actionHigh[i].inputPort   = 0xFF;
+		actionHigh[i].deviceId    = 0xFF;
+		actionHigh[i].ports       = 0;
+		actionLow[i].inputPort    = 0xFF;
+		actionLow[i].deviceId     = 0xFF;
+		actionLow[i].ports        = 0;
+	}
+}
+
+void saveConfig() {
+	uint32_t EEPROMPointer = 0;
+	EEPROM.put(EEPROMPointer, FIRMWARE_VERSION);
+	firmwareVersion = FIRMWARE_VERSION;
+	EEPROMPointer += sizeof(FIRMWARE_VERSION);
+
+	// Reset input configuration
+	for (uint8_t inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
+		EEPROM.put(EEPROMPointer, inputConfig[inputPort]);
+		EEPROMPointer += sizeof(inputConfig[inputPort]);
+	}
+
+	// Reset Action maps
+	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
+		EEPROM.put(EEPROMPointer, actionToggle[i]);
+		EEPROMPointer += sizeof(actionToggle[i]);
+	}
+	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
+		EEPROM.put(EEPROMPointer, actionHigh[i]);
+		EEPROMPointer += sizeof(actionHigh[i]);
+	}
+	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
+		EEPROM.put(EEPROMPointer, actionLow[i]);
+		EEPROMPointer += sizeof(actionLow[i]);
+	}
+}
+
+void readConfig() {
+	uint32_t EEPROMPointer = 0;
+	EEPROM.get(EEPROMPointer, firmwareVersion);
+	EEPROMPointer += sizeof(firmwareVersion);
+
+	// Reset input configuration
+	for (uint8_t inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
+		EEPROM.get(EEPROMPointer, inputConfig[inputPort]);
+		EEPROMPointer += sizeof(inputConfig[inputPort]);
+	}
+
+	// Reset Action maps
+	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
+		EEPROM.get(EEPROMPointer, actionToggle[i]);
+		EEPROMPointer += sizeof(actionToggle[i]);
+	}
+	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
+		EEPROM.get(EEPROMPointer, actionHigh[i]);
+		EEPROMPointer += sizeof(actionHigh[i]);
+	}
+	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
+		EEPROM.get(EEPROMPointer, actionLow[i]);
+		EEPROMPointer += sizeof(actionLow[i]);
+	}
 }
 
 // Handle one received CAN frame for us
@@ -326,9 +389,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 		// Write current configuration to EEPROM
 		if (isWriteEEPROM) {
-			// Store single input config
-			// TODO data between 0 and 16 !!!
-			EEPROM.put(sizeof(ConfigRegister) * data, inputConfig[data]);
+			// Store configuration into EEPROM
+			saveConfig();
 			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, data);
 			return;
 		}
@@ -361,13 +423,22 @@ void canProcessFrame(const CAN_message_t& rx) {
 					break;
 				case CONF_ACTION_RESET:
 					// Remove existing actions
-					for (uint8_t i = 0; i < SIZE_GRID; i++) {
-						inputConfig[port].actionToggle[i].deviceId = 0xFF;
-						inputConfig[port].actionToggle[i].ports = 0x0;
-						inputConfig[port].actionHigh[i].deviceId = 0xFF;
-						inputConfig[port].actionHigh[i].ports = 0x0;
-						inputConfig[port].actionLow[i].deviceId = 0xFF;
-						inputConfig[port].actionLow[i].ports = 0x0;
+					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+						if (actionToggle[i].inputPort == port) {
+							actionToggle[i].inputPort = 0xFF;
+							actionToggle[i].deviceId = 0xFF;
+							actionToggle[i].ports = 0x0;
+						}
+						if (actionHigh[i].inputPort == port) {
+							actionHigh[i].inputPort = 0xFF;
+							actionHigh[i].deviceId = 0xFF;
+							actionHigh[i].ports = 0x0;
+						}
+						if (actionLow[i].inputPort == port) {
+							actionLow[i].inputPort = 0xFF;
+							actionLow[i].deviceId = 0xFF;
+							actionLow[i].ports = 0x0;
+						}
 					}
 					break;
 				case CONF_ACTION_TOGGLE:
@@ -375,19 +446,21 @@ void canProcessFrame(const CAN_message_t& rx) {
 					actionPorts = data & 0x00FFFF;
 
 					// Remove existing mapping
-					for (uint8_t i = 0; i < SIZE_GRID; i++) {
-						if (inputConfig[port].actionToggle[i].deviceId == actionDeviceId) {
-							inputConfig[port].actionToggle[i].deviceId = 0xFF;
-							inputConfig[port].actionToggle[i].ports = 0x0;
+					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+						if (actionToggle[i].deviceId == actionDeviceId && actionToggle[i].inputPort == port) {
+							actionToggle[i].inputPort = 0xFF;
+							actionToggle[i].deviceId = 0xFF;
+							actionToggle[i].ports = 0x0;
 						}
 					}
 
 					// Add mapping if ports for device are defined
 					if (actionPorts != 0) {
-						for (uint8_t i = 0; i < SIZE_GRID; i++) {
-							if (inputConfig[port].actionToggle[i].deviceId == 0xFF) {
-								inputConfig[port].actionToggle[i].deviceId = actionDeviceId;
-								inputConfig[port].actionToggle[i].ports = actionPorts;
+						for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+							if (actionToggle[i].deviceId == 0xFF) {
+								actionToggle[i].inputPort = port;
+								actionToggle[i].deviceId = actionDeviceId;
+								actionToggle[i].ports = actionPorts;
 								break;
 							}
 						}
@@ -398,19 +471,21 @@ void canProcessFrame(const CAN_message_t& rx) {
 					actionPorts = data & 0x00FFFF;
 
 					// Remove existing mapping
-					for (uint8_t i = 0; i < SIZE_GRID; i++) {
-						if (inputConfig[port].actionHigh[i].deviceId == actionDeviceId) {
-							inputConfig[port].actionHigh[i].deviceId = 0xFF;
-							inputConfig[port].actionHigh[i].ports = 0x0;
+					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+						if (actionHigh[i].deviceId == actionDeviceId && actionHigh[i].inputPort == port) {
+							actionHigh[i].inputPort = 0xFF;
+							actionHigh[i].deviceId = 0xFF;
+							actionHigh[i].ports = 0x0;
 						}
 					}
 
 					// Add mapping if ports for device are defined
 					if (actionPorts != 0) {
-						for (uint8_t i = 0; i < SIZE_GRID; i++) {
-							if (inputConfig[port].actionHigh[i].deviceId == 0xFF) {
-								inputConfig[port].actionHigh[i].deviceId = actionDeviceId;
-								inputConfig[port].actionHigh[i].ports = actionPorts;
+						for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+							if (actionHigh[i].deviceId == 0xFF) {
+								actionHigh[i].inputPort = port;
+								actionHigh[i].deviceId = actionDeviceId;
+								actionHigh[i].ports = actionPorts;
 								break;
 							}
 						}
@@ -421,19 +496,21 @@ void canProcessFrame(const CAN_message_t& rx) {
 					actionPorts = data & 0x00FFFF;
 
 					// Remove existing mapping
-					for (uint8_t i = 0; i < SIZE_GRID; i++) {
-						if (inputConfig[port].actionLow[i].deviceId == actionDeviceId) {
-							inputConfig[port].actionLow[i].deviceId = 0xFF;
-							inputConfig[port].actionLow[i].ports = 0x0;
+					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+						if (actionLow[i].deviceId == actionDeviceId && actionLow[i].inputPort == port) {
+							actionLow[i].inputPort = 0xFF;
+							actionLow[i].deviceId = 0xFF;
+							actionLow[i].ports = 0x0;
 						}
 					}
 
 					// Add mapping if ports for device are defined
 					if (actionPorts != 0) {
-						for (uint8_t i = 0; i < SIZE_GRID; i++) {
-							if (inputConfig[port].actionLow[i].deviceId == 0xFF) {
-								inputConfig[port].actionLow[i].deviceId = actionDeviceId;
-								inputConfig[port].actionLow[i].ports = actionPorts;
+						for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+							if (actionLow[i].deviceId == 0xFF) {
+								actionLow[i].inputPort = port;
+								actionLow[i].deviceId = actionDeviceId;
+								actionLow[i].ports = actionPorts;
 								break;
 							}
 						}
@@ -478,24 +555,36 @@ void canProcessFrame(const CAN_message_t& rx) {
 					break;
 				case CONF_ACTION_TOGGLE:
 					// Send configurations for output ports related to all devices on grid
-					for (uint8_t i = 0; i < SIZE_GRID; i++) {
-						confData = inputConfig[port].actionToggle[i].deviceId << 16 | inputConfig[port].actionToggle[i].ports;
-						sendAck(from, deviceId, commCtrl | ACK_BIT | (i + 1 < SIZE_GRID ? WAIT_BIT : EMPTY_BYTE), dataCtrl, port, ((uint32_t)conf << 24) | confData);
+					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+						if (actionToggle[i].inputPort == port) {
+							confData = actionToggle[i].deviceId << 16 | actionToggle[i].ports;
+							sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, dataCtrl, port, ((uint32_t)conf << 24) | confData);
+						}
 					}
+					// Send last package as empty
+					sendAck(from, deviceId, commCtrl | ACK_BIT | EMPTY_BYTE, dataCtrl, port, ((uint32_t)conf << 24) | 0xFF0000);
 					return;
 				case CONF_ACTION_HIGH:
 					// Send configurations for output ports related to all devices on grid
-					for (uint8_t i = 0; i < SIZE_GRID; i++) {
-						confData = inputConfig[port].actionHigh[i].deviceId << 16 | inputConfig[port].actionHigh[i].ports;
-						sendAck(from, deviceId, commCtrl | ACK_BIT | (i + 1 < SIZE_GRID ? WAIT_BIT : EMPTY_BYTE), dataCtrl, port, ((uint32_t)conf << 24) | confData);
+					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+						if (actionHigh[i].inputPort == port) {
+							confData = actionHigh[i].deviceId << 16 | actionHigh[i].ports;
+							sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, dataCtrl, port, ((uint32_t)conf << 24) | confData);
+						}
 					}
+					// Send last package as empty
+					sendAck(from, deviceId, commCtrl | ACK_BIT | EMPTY_BYTE, dataCtrl, port, ((uint32_t)conf << 24) | 0xFF0000);
 					return;
 				case CONF_ACTION_LOW:
 					// Send configurations for output ports related to all devices on grid
-					for (uint8_t i = 0; i < SIZE_GRID; i++) {
-						confData = inputConfig[port].actionLow[i].deviceId << 16 | inputConfig[port].actionLow[i].ports;
-						sendAck(from, deviceId, commCtrl | ACK_BIT | (i + 1 < SIZE_GRID ? WAIT_BIT : EMPTY_BYTE), dataCtrl, port, ((uint32_t)conf << 24) | confData);
+					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+						if (actionLow[i].inputPort == port) {
+							confData = actionLow[i].deviceId << 16 | actionLow[i].ports;
+							sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, dataCtrl, port, ((uint32_t)conf << 24) | confData);
+						}
 					}
+					// Send last package as empty
+					sendAck(from, deviceId, commCtrl | ACK_BIT | EMPTY_BYTE, dataCtrl, port, ((uint32_t)conf << 24) | 0xFF0000);
 					return;
 				case CONF_DEBOUNCE:
 					confData = ((uint32_t)inputConfig[port].debounce) & 0x00FFFFFFU;
@@ -638,16 +727,17 @@ void setup() {
 	for (int pin = 0; pin < 2; pin++) {
 		pinMode(configurationPins[pin], INPUT_PULLUP);
 	}
+	
+	// Read configuration from EEPROM
+	readConfig();
 
-	for (int inputPort=0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
-		// Read input device configuration from EEPROM
-		EEPROM.get(sizeof(ConfigRegister) * inputPort, inputConfig[inputPort]);
-		// Initialize only when version is different
-		if (inputConfig[inputPort].version != FIRMWARE_VERSION) {
-			ConfigRegister def{};
-			inputConfig[inputPort] = def;
-			resetDigitalInputConf(inputPort);
-		}
+	// Compare version value against value in EEPROM
+	if (firmwareVersion != FIRMWARE_VERSION) {
+		// Reset input configuration and action map configurations
+		resetConfig();
+
+		// Store defaults into EEPROM
+		saveConfig();
 	}
 
 	// Read configuration pins
@@ -728,48 +818,48 @@ void loop() {
 				if (inputConfig[inputPort].isSwitch || (inputConfig[inputPort].isButtonRisingEdge && inputDigitals[inputPort].value == HIGH) || (inputConfig[inputPort].isButtonFallingEdge && inputDigitals[inputPort].value == LOW)) {
 					// Toggle all matching output ports
 					// Action low outputs
-					for (uint8_t gridDevIdx = 0; gridDevIdx < SIZE_GRID; gridDevIdx++) {
-						if (inputConfig[inputPort].actionLow[gridDevIdx].deviceId != 0xFF) {
+					for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+						if (actionLow[gridDevIdx].deviceId != 0xFF && actionLow[gridDevIdx].inputPort == inputPort) {
 							for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
-								if (inputConfig[inputPort].actionLow[gridDevIdx].ports & (1 << outputPort)) {
-									if (inputConfig[inputPort].actionLow[gridDevIdx].deviceId == deviceId) {
+								if (actionLow[gridDevIdx].ports & (1 << outputPort)) {
+									if (actionLow[gridDevIdx].deviceId == deviceId) {
 										// Change value of local output port
 										setDigitalOutput(outputPort, LOW, 0);
 									} else {
 										// Send command to change output port on deviceId 
-										canWriteFrame(inputConfig[inputPort].actionLow[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, 0);
+										canWriteFrame(actionLow[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, 0);
 									}
 								}
 							}
 						}
 					}
 					// Action toggle outputs
-					for (uint8_t gridDevIdx = 0; gridDevIdx < SIZE_GRID; gridDevIdx++) {
-						if (inputConfig[inputPort].actionToggle[gridDevIdx].deviceId != 0xFF) {
+					for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+						if (actionToggle[gridDevIdx].deviceId != 0xFF && actionToggle[gridDevIdx].inputPort == inputPort) {
 							for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
-								if (inputConfig[inputPort].actionToggle[gridDevIdx].ports & (1 << outputPort)) {
-									if (inputConfig[inputPort].actionToggle[gridDevIdx].deviceId == deviceId) {
+								if (actionToggle[gridDevIdx].ports & (1 << outputPort)) {
+									if (actionToggle[gridDevIdx].deviceId == deviceId) {
 										// Change value of local output port
 										setDigitalOutput(outputPort, outputDigitals[outputPort].value == HIGH ? LOW : HIGH, 0);
 									} else {
 										// Send command to change output port on deviceId 
-										canWriteFrame(inputConfig[inputPort].actionToggle[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_TOGGLE << 4, outputPort, 0);
+										canWriteFrame(actionToggle[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_TOGGLE << 4, outputPort, 0);
 									}
 								}
 							}
 						}
 					}
 					// Action high outputs
-					for (uint8_t gridDevIdx = 0; gridDevIdx < SIZE_GRID; gridDevIdx++) {
-						if (inputConfig[inputPort].actionHigh[gridDevIdx].deviceId != 0xFF) {
+					for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+						if (actionHigh[gridDevIdx].deviceId != 0xFF && actionHigh[gridDevIdx].inputPort == inputPort) {
 							for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
-								if (inputConfig[inputPort].actionHigh[gridDevIdx].ports & (1 << outputPort)) {
-									if (inputConfig[inputPort].actionHigh[gridDevIdx].deviceId == deviceId) {
+								if (actionHigh[gridDevIdx].ports & (1 << outputPort)) {
+									if (actionHigh[gridDevIdx].deviceId == deviceId) {
 										// Change value of local output port
 										setDigitalOutput(outputPort, HIGH, 0);
 									} else {
 										// Send command to change output port on deviceId
-										canWriteFrame(inputConfig[inputPort].actionHigh[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, HIGH);
+										canWriteFrame(actionHigh[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, HIGH);
 									}
 								}
 							}
@@ -794,16 +884,16 @@ void loop() {
 				|| dipSwitchBypass && inputConfig[inputPort].bypassOnDIPSwitch == true) {
 
 				// Action high outputs with delayLow
-				for (uint8_t gridDevIdx = 0; gridDevIdx < SIZE_GRID; gridDevIdx++) {
-					if (inputConfig[inputPort].actionHigh[gridDevIdx].deviceId != 0xFF) {
+				for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+					if (actionHigh[gridDevIdx].deviceId != 0xFF && actionHigh[gridDevIdx].inputPort == inputPort) {
 						for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
-							if (inputConfig[inputPort].actionHigh[gridDevIdx].ports & (1 << outputPort)) {
-								if (inputConfig[inputPort].actionHigh[gridDevIdx].deviceId == deviceId) {
+							if (actionHigh[gridDevIdx].ports & (1 << outputPort)) {
+								if (actionHigh[gridDevIdx].deviceId == deviceId) {
 									// Change value of local output port
 									setDigitalOutput(outputPort, HIGH, inputConfig[inputPort].longpressDelayLow);
 								} else {
 									// Send command to change output port on deviceId
-									canWriteFrame(inputConfig[inputPort].actionHigh[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4 | TYPE_BYTE, outputPort, inputConfig[inputPort].longpressDelayLow);
+									canWriteFrame(actionHigh[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4 | TYPE_BYTE, outputPort, inputConfig[inputPort].longpressDelayLow);
 								}
 							}
 						}
