@@ -291,6 +291,29 @@ void readConfig() {
 	}
 }
 
+void updateActionMap(ActionMap actionMap[], uint8_t inputPort, uint8_t actionDeviceId, uint16_t actionPorts) {
+	// Remove existing mapping
+	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+		if (actionMap[i].deviceId == actionDeviceId && actionMap[i].inputPort == inputPort) {
+			actionMap[i].inputPort = 0xFF;
+			actionMap[i].deviceId = 0xFF;
+			actionMap[i].ports = 0x0;
+		}
+	}
+
+	// Add mapping if ports for device are defined
+	if (actionPorts != 0) {
+		for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+			if (actionMap[i].deviceId == 0xFF) {
+				actionMap[i].inputPort = inputPort;
+				actionMap[i].deviceId = actionDeviceId;
+				actionMap[i].ports = actionPorts;
+				break;
+			}
+		}
+	}
+}
+
 // Handle one received CAN frame for us
 void canProcessFrame(const CAN_message_t& rx) {
 	// Only process frames where CAN ID matches us or broadcast
@@ -442,79 +465,13 @@ void canProcessFrame(const CAN_message_t& rx) {
 					}
 					break;
 				case CONF_ACTION_TOGGLE:
-					actionDeviceId = data >> 16;
-					actionPorts = data & 0x00FFFF;
-
-					// Remove existing mapping
-					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
-						if (actionToggle[i].deviceId == actionDeviceId && actionToggle[i].inputPort == port) {
-							actionToggle[i].inputPort = 0xFF;
-							actionToggle[i].deviceId = 0xFF;
-							actionToggle[i].ports = 0x0;
-						}
-					}
-
-					// Add mapping if ports for device are defined
-					if (actionPorts != 0) {
-						for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
-							if (actionToggle[i].deviceId == 0xFF) {
-								actionToggle[i].inputPort = port;
-								actionToggle[i].deviceId = actionDeviceId;
-								actionToggle[i].ports = actionPorts;
-								break;
-							}
-						}
-					}
+					updateActionMap(actionToggle, port, data >> 16, data & 0x00FFFF);
 					break;
 				case CONF_ACTION_HIGH:
-					actionDeviceId = data >> 16;
-					actionPorts = data & 0x00FFFF;
-
-					// Remove existing mapping
-					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
-						if (actionHigh[i].deviceId == actionDeviceId && actionHigh[i].inputPort == port) {
-							actionHigh[i].inputPort = 0xFF;
-							actionHigh[i].deviceId = 0xFF;
-							actionHigh[i].ports = 0x0;
-						}
-					}
-
-					// Add mapping if ports for device are defined
-					if (actionPorts != 0) {
-						for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
-							if (actionHigh[i].deviceId == 0xFF) {
-								actionHigh[i].inputPort = port;
-								actionHigh[i].deviceId = actionDeviceId;
-								actionHigh[i].ports = actionPorts;
-								break;
-							}
-						}
-					}
+					updateActionMap(actionHigh, port, data >> 16, data & 0x00FFFF);
 					break;
 				case CONF_ACTION_LOW:
-					actionDeviceId = data >> 16;
-					actionPorts = data & 0x00FFFF;
-
-					// Remove existing mapping
-					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
-						if (actionLow[i].deviceId == actionDeviceId && actionLow[i].inputPort == port) {
-							actionLow[i].inputPort = 0xFF;
-							actionLow[i].deviceId = 0xFF;
-							actionLow[i].ports = 0x0;
-						}
-					}
-
-					// Add mapping if ports for device are defined
-					if (actionPorts != 0) {
-						for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
-							if (actionLow[i].deviceId == 0xFF) {
-								actionLow[i].inputPort = port;
-								actionLow[i].deviceId = actionDeviceId;
-								actionLow[i].ports = actionPorts;
-								break;
-							}
-						}
-					}
+					updateActionMap(actionLow, port, data >> 16, data & 0x00FFFF);
 					break;
 				case CONF_DEBOUNCE:
 					inputConfig[port].debounce = data;
