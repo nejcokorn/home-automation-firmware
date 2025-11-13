@@ -29,17 +29,16 @@
 #define CONF_BUTTON_RISING_EDGE    0b00000000
 #define CONF_BUTTON_FALLIN_EDGE    0b00000001
 #define CONF_SWITCH                0b00000010
-#define CONF_ACTION_RESET          0b00000011
-#define CONF_ACTIONS               0b00000100 // This is for reading only
-#define CONF_ACTION_TOGGLE         0b00000101
-#define CONF_ACTION_HIGH           0b00000110
-#define CONF_ACTION_LOW            0b00000111
-#define CONF_DEBOUNCE              0b00001000
-#define CONF_LONGPRESS             0b00001001
-#define CONF_LONGPRESS_DELAYLOW    0b00001010
-#define CONF_BYPASS_INSTANTLY      0b00001011
-#define CONF_BYPASS_ON_DIP_SWITCH  0b00001100
-#define CONF_BYPASS_ON_DISCONNECT  0b00001101
+#define CONF_ACTIONS               0b00000011 // Read - read all actions, Write - reset all actions
+#define CONF_ACTION_TOGGLE         0b00000100
+#define CONF_ACTION_HIGH           0b00000101
+#define CONF_ACTION_LOW            0b00000110
+#define CONF_DEBOUNCE              0b00000111
+#define CONF_LONGPRESS             0b00001000
+#define CONF_LONGPRESS_DELAYLOW    0b00001001
+#define CONF_BYPASS_INSTANTLY      0b00001010
+#define CONF_BYPASS_ON_DIP_SWITCH  0b00001011
+#define CONF_BYPASS_ON_DISCONNECT  0b00001100
 
 // Protocol types
 #define TYPE_DIGITAL  0
@@ -417,8 +416,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 				case CONF_SWITCH:
 					inputConfig[port].isSwitch = data > 0;
 					break;
-				case CONF_ACTION_RESET:
-					// Remove existing actions
+				case CONF_ACTIONS:
+					// Remove all actions for specific port
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionMap[i].inputPort == port) {
 							actionMap[i].deviceId = 0xFF;
