@@ -31,27 +31,29 @@
 #define CONFIG_OPTIONS_BIT    0x3F
 
 // Config options
-#define CONFIG_WRITE_EEPROM          0b00000 // Write all configuration into EEPROM
-#define CONFIG_BUTTON_RISING_EDGE    0b00001 // Input acts as a Button on rising edge
-#define CONFIG_BUTTON_FALLIN_EDGE    0b00010 // Input acts as a Button on falling edge
-#define CONFIG_SWITCH                0b00011 // Input acts as Switch
-#define CONFIG_DEBOUNCE              0b00100 // Debounce in microseconds
-#define CONFIG_LONGPRESS             0b00101 // Longpress in milliseconds
-#define CONFIG_DOUBLECLICK           0b00110 // Double-click in milliseconds
-#define CONFIG_DELAY                 0b00111 // Delay action in milliseconds
-#define CONFIG_ACTIONS               0b01000 // Get/Reset all actions
-#define CONFIG_ACTION_TOGGLE         0b01001 // Action toggle output pins
-#define CONFIG_ACTION_HIGH           0b01010 // Action high output pins
-#define CONFIG_ACTION_LOW            0b01011 // Action low output pins
-#define CONFIG_ACTION_LONG_TOGGLE    0b01100 // Action longpress toggle output pins
-#define CONFIG_ACTION_LONG_HIGH      0b01101 // Action longpress high output pins
-#define CONFIG_ACTION_LONG_LOW       0b01110 // Action longpress low output pins
-#define CONFIG_ACTION_DOUBLE_TOGGLE  0b01111 // Action double-click toggle output pins
-#define CONFIG_ACTION_DOUBLE_HIGH    0b10000 // Action double-click high output pins
-#define CONFIG_ACTION_DOUBLE_LOW     0b10001 // Action double-click low output pins
-#define CONFIG_BYPASS_INSTANTLY      0b10010 // Bypass Instantly
-#define CONFIG_BYPASS_ON_DIP_SWITCH  0b10011 // Bypass determined by DIP switch
-#define CONFIG_BYPASS_ON_DISCONNECT  0b10100 // Bypass on disconnect in milliseconds
+enum class ConfigOptions : uint8_t {
+	writeEEPROM        = 0b00000000, // Write all configuration into EEPROM
+	buttonRisingEdge   = 0b00000001, // Input acts as a Button on rising edge
+	buttonFallingEdge  = 0b00000010, // Input acts as a Button on falling edge
+	switcher           = 0b00000011, // Input acts as Switch
+	debounce           = 0b00000100, // Debounce in microseconds
+	longpress          = 0b00000101, // Longpress in milliseconds
+	doubleclick        = 0b00000110, // Double-click in milliseconds
+	delay              = 0b00000111, // Delay action in milliseconds
+	actions            = 0b00001000, // Get/Reset all actions
+	actionToggle       = 0b00001001, // Action toggle output pins
+	actionHigh         = 0b00001010, // Action high output pins
+	actionLow          = 0b00001011, // Action low output pins
+	actionLongToggle   = 0b00001100, // Action longpress toggle output pins
+	actionLongHigh     = 0b00001101, // Action longpress high output pins
+	actionLongLow      = 0b00001110, // Action longpress low output pins
+	actionDoubleToggle = 0b00001111, // Action double-click toggle output pins
+	actionDoubleHigh   = 0b00010000, // Action double-click high output pins
+	actionDoubleLow    = 0b00010001, // Action double-click low output pins
+	bypassInstantly    = 0b00010010, // Bypass Instantly
+	bypassOnDIPSwitch  = 0b00010011, // Bypass determined by DIP switch
+	bypassOnDisconnect = 0b00010100 // Bypass on disconnect in milliseconds
+};
 
 // Protocol types
 #define TYPE_DIGITAL  0
@@ -376,7 +378,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 	// Config control parameters
 	bool isConfig            = (configCtrl & CONFIG_BIT) >> 7;
 	bool isConfigWrite       = (configCtrl & CONFIG_OPERATION_BIT) >> 6;
-	uint8_t config           = (configCtrl & CONFIG_OPTIONS_BIT);
+	uint8_t configOption     = (configCtrl & CONFIG_OPTIONS_BIT);
 
 	// Discovery
 	if (isDiscovery) {
@@ -440,7 +442,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		// Write current configuration to EEPROM
-		if (isConfigWrite == true && config == CONFIG_WRITE_EEPROM) {
+		if (isConfigWrite == true && static_cast<ConfigOptions>(configOption) == ConfigOptions::writeEEPROM) {
 			// Store configuration into EEPROM
 			saveConfig();
 			sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, data);
@@ -457,29 +459,29 @@ void canProcessFrame(const CAN_message_t& rx) {
 			uint8_t actionDeviceId = data >> 16;
 			uint16_t actionPorts = data & 0xFFF;
 
-			switch (config) {
-				case CONFIG_BUTTON_RISING_EDGE:
+			switch (static_cast<ConfigOptions>(configOption)) {
+				case ConfigOptions::buttonRisingEdge:
 					inputConfig[port].isButtonRisingEdge = data > 0;
 					break;
-				case CONFIG_BUTTON_FALLIN_EDGE:
+				case ConfigOptions::buttonFallingEdge:
 					inputConfig[port].isButtonFallingEdge = data > 0;
 					break;
-				case CONFIG_SWITCH:
+				case ConfigOptions::switcher:
 					inputConfig[port].isSwitch = data > 0;
 					break;
-				case CONFIG_DEBOUNCE:
+				case ConfigOptions::debounce:
 					inputConfig[port].debounce = data;
 					break;
-				case CONFIG_LONGPRESS:
+				case ConfigOptions::longpress:
 					inputConfig[port].longpress = data;
 					break;
-				case CONFIG_DOUBLECLICK:
+				case ConfigOptions::doubleclick:
 					inputConfig[port].doubleclick = data;
 					break;
-				case CONFIG_DELAY:
+				case ConfigOptions::delay:
 					updateActionDelay(data);
 					break;
-				case CONFIG_ACTIONS:
+				case ConfigOptions::actions:
 					// Remove all actions for specific port
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionMap[i].inputPort == port) {
@@ -491,40 +493,40 @@ void canProcessFrame(const CAN_message_t& rx) {
 						}
 					}
 					break;
-				case CONFIG_ACTION_TOGGLE:
+				case ConfigOptions::actionToggle:
 					updateActionMap(actionDeviceId, port, TYPE_TOGGLE, actionPorts);
 					break;
-				case CONFIG_ACTION_HIGH:
+				case ConfigOptions::actionHigh:
 					updateActionMap(actionDeviceId, port, TYPE_HIGH, actionPorts);
 					break;
-				case CONFIG_ACTION_LOW:
+				case ConfigOptions::actionLow:
 					updateActionMap(actionDeviceId, port, TYPE_LOW, actionPorts);
 					break;
-				case CONFIG_ACTION_LONG_TOGGLE:
+				case ConfigOptions::actionLongToggle:
 					updateActionMap(actionDeviceId, port, TYPE_LONG_TOGGLE, actionPorts);
 					break;
-				case CONFIG_ACTION_LONG_HIGH:
+				case ConfigOptions::actionLongHigh:
 					updateActionMap(actionDeviceId, port, TYPE_LONG_HIGH, actionPorts);
 					break;
-				case CONFIG_ACTION_LONG_LOW:
+				case ConfigOptions::actionLongLow:
 					updateActionMap(actionDeviceId, port, TYPE_LONG_LOW, actionPorts);
 					break;
-				case CONFIG_ACTION_DOUBLE_TOGGLE:
+				case ConfigOptions::actionDoubleToggle:
 					updateActionMap(actionDeviceId, port, TYPE_DOUBLE_TOGGLE, actionPorts);
 					break;
-				case CONFIG_ACTION_DOUBLE_HIGH:
+				case ConfigOptions::actionDoubleHigh:
 					updateActionMap(actionDeviceId, port, TYPE_DOUBLE_HIGH, actionPorts);
 					break;
-				case CONFIG_ACTION_DOUBLE_LOW:
+				case ConfigOptions::actionDoubleLow:
 					updateActionMap(actionDeviceId, port, TYPE_DOUBLE_LOW, actionPorts);
 					break;
-				case CONFIG_BYPASS_INSTANTLY:
+				case ConfigOptions::bypassInstantly:
 					inputConfig[port].bypassInstantly = data > 0;
 					break;
-				case CONFIG_BYPASS_ON_DIP_SWITCH:
+				case ConfigOptions::bypassOnDIPSwitch:
 					inputConfig[port].bypassOnDIPSwitch = data > 0;
 					break;
-				case CONFIG_BYPASS_ON_DISCONNECT:
+				case ConfigOptions::bypassOnDisconnect:
 					inputConfig[port].bypassOnDisconnect = data;
 					break;
 				default:
@@ -536,58 +538,58 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		} else if (operationType == TYPE_READ) {
 			uint32_t confData = 0;
-			switch (config) {
-				case CONFIG_BUTTON_RISING_EDGE:
+			switch (static_cast<ConfigOptions>(configOption)) {
+				case ConfigOptions::buttonRisingEdge:
 					confData = inputConfig[port].isButtonRisingEdge ? 1 : 0;
 					break;
-				case CONFIG_BUTTON_FALLIN_EDGE:
+				case ConfigOptions::buttonFallingEdge:
 					confData = inputConfig[port].isButtonFallingEdge ? 1 : 0;
 					break;
-				case CONFIG_SWITCH:
+				case ConfigOptions::switcher:
 					confData = inputConfig[port].isSwitch ? 1 : 0;
 					break;
-				case CONFIG_DEBOUNCE:
+				case ConfigOptions::debounce:
 					confData = ((uint32_t)inputConfig[port].debounce);
 					break;
-				case CONFIG_LONGPRESS:
+				case ConfigOptions::longpress:
 					confData = ((uint32_t)inputConfig[port].longpress);
 					break;
-				case CONFIG_DOUBLECLICK:
+				case ConfigOptions::doubleclick:
 					confData = ((uint32_t)inputConfig[port].doubleclick);
 					break;
-				case CONFIG_ACTIONS:
-					uint8_t typeToActionConf[9];
-					typeToActionConf[TYPE_LOW] = CONFIG_ACTION_LOW;
-					typeToActionConf[TYPE_HIGH] = CONFIG_ACTION_HIGH;
-					typeToActionConf[TYPE_TOGGLE] = CONFIG_ACTION_TOGGLE;
-					typeToActionConf[TYPE_LONG_LOW] = CONFIG_ACTION_LONG_LOW;
-					typeToActionConf[TYPE_LONG_HIGH] = CONFIG_ACTION_LONG_HIGH;
-					typeToActionConf[TYPE_LONG_TOGGLE] = CONFIG_ACTION_LONG_TOGGLE;
-					typeToActionConf[TYPE_DOUBLE_LOW] = CONFIG_ACTION_DOUBLE_LOW;
-					typeToActionConf[TYPE_DOUBLE_HIGH] = CONFIG_ACTION_DOUBLE_HIGH;
-					typeToActionConf[TYPE_DOUBLE_TOGGLE] = CONFIG_ACTION_DOUBLE_TOGGLE;
+				case ConfigOptions::actions:
+					ConfigOptions typeToActionConf[9];
+					typeToActionConf[TYPE_LOW] = ConfigOptions::actionLow;
+					typeToActionConf[TYPE_HIGH] = ConfigOptions::actionHigh;
+					typeToActionConf[TYPE_TOGGLE] = ConfigOptions::actionToggle;
+					typeToActionConf[TYPE_LONG_LOW] = ConfigOptions::actionLongLow;
+					typeToActionConf[TYPE_LONG_HIGH] = ConfigOptions::actionLongHigh;
+					typeToActionConf[TYPE_LONG_TOGGLE] = ConfigOptions::actionLongToggle;
+					typeToActionConf[TYPE_DOUBLE_LOW] = ConfigOptions::actionDoubleLow;
+					typeToActionConf[TYPE_DOUBLE_HIGH] = ConfigOptions::actionDoubleHigh;
+					typeToActionConf[TYPE_DOUBLE_TOGGLE] = ConfigOptions::actionDoubleToggle;
 					// Send configurations for output ports related to all devices on grid
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionMap[i].inputPort == port) {
 							confData = actionMap[i].deviceId << 16 | actionMap[i].ports;
-							sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, CONFIG_BIT | CONFIG_READ_BIT | typeToActionConf[actionMap[i].type], port, confData);
+							sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, CONFIG_BIT | CONFIG_READ_BIT | (uint8_t)typeToActionConf[actionMap[i].type], port, confData);
 							
 							if (actionMap[i].delay != 0) {
 								// Send information about action delay
-								sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, CONFIG_BIT | CONFIG_READ_BIT | CONFIG_DELAY, port, actionMap[i].delay);
+								sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, CONFIG_BIT | CONFIG_READ_BIT | (uint8_t)ConfigOptions::delay, port, actionMap[i].delay);
 							}
 						}
 					}
 					// Send last package as empty
 					sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, 0);
 					return;
-				case CONFIG_BYPASS_INSTANTLY:
+				case ConfigOptions::bypassInstantly:
 					confData = inputConfig[port].bypassInstantly ? 1 : 0;
 					break;
-				case CONFIG_BYPASS_ON_DIP_SWITCH:
+				case ConfigOptions::bypassOnDIPSwitch:
 					confData = inputConfig[port].bypassOnDIPSwitch ? 1 : 0;
 					break;
-				case CONFIG_BYPASS_ON_DISCONNECT:
+				case ConfigOptions::bypassOnDisconnect:
 					confData = inputConfig[port].bypassOnDisconnect;
 					break;
 				default:
