@@ -6,17 +6,16 @@
 // Version is defined as 00 <Mayor> <Minor> <Bugfix>
 #define FIRMWARE_VERSION  0x00000100UL
 
-// Use for both communictaion byte and data byte
-#define EMPTY_BYTE        0x00
-
 // Communication control byte
-
-#define COMMAND_BIT       0x80
-#define DISCOVERY_BIT     0x40
-#define PING_BIT          0x20
-#define ACK_BIT           0x10
-#define WAIT_BIT          0x08
-#define ERROR_BIT         0x04
+enum class CommunicationCtrl: uint8_t {
+	empty          = 0x00,
+	commandBit     = 0x80,
+	discoveryBit   = 0x40,
+	pingBit        = 0x20,
+	acknowledgeBit = 0x10,
+	waitBit        = 0x08,
+	errorBit       = 0x04,
+};
 
 // Data control
 enum class DataCtrl: uint8_t {
@@ -216,15 +215,26 @@ void canWriteFrame(uint16_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl
 
 // Send acknowledge frame
 void sendAck(uint8_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uint8_t port, uint32_t data) {
-	// Set A=1, keep R=1, O/C etc. as mirrored from request (your spec)
-	uint8_t cc = (commCtrl | ACK_BIT) & ~ERROR_BIT; // ensure E=0
-	canWriteFrame(to, from, cc, dataCtrl, port, data);
+	// Set acknowledgeBit, ensure no errorBit
+	canWriteFrame(
+		to,
+		from,
+		(commCtrl | (uint8_t)CommunicationCtrl::acknowledgeBit) & ~(uint8_t)CommunicationCtrl::errorBit,
+		dataCtrl,
+		port,
+		data);
 }
 
 // Send error frame
 void sendError(uint8_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uint8_t port, uint32_t errCode) {
-	uint8_t cc = (commCtrl | ACK_BIT | ERROR_BIT);
-	canWriteFrame(to, from, cc, dataCtrl, port, errCode);
+	// Set acknowledgeBit and errorBit
+	canWriteFrame(
+		to,
+		from,
+		(commCtrl | (uint8_t)CommunicationCtrl::acknowledgeBit) & (uint8_t)CommunicationCtrl::errorBit,
+		dataCtrl,
+		port,
+		errCode);
 }
 
 // Change status of the output port
@@ -368,12 +378,12 @@ void canProcessFrame(const CAN_message_t& rx) {
 	uint32_t data = ((uint32_t)rx.buf[4] << 24) | ((uint32_t)rx.buf[5] << 16) | ((uint32_t)rx.buf[6] << 8) | (uint32_t)rx.buf[7]; // B5..B8
 
 	// Communication control parameters
-	bool isCommand     = (commCtrl & COMMAND_BIT) >> 7;
-	bool isDiscovery   = (commCtrl & DISCOVERY_BIT) >> 6;
-	bool isPing        = (commCtrl & PING_BIT) >> 5;
-	bool isAcknowledge = (commCtrl & ACK_BIT) >> 4;
-	bool isWait        = (commCtrl & WAIT_BIT) >> 3;
-	bool isError       = (commCtrl & ERROR_BIT) >> 2;
+	bool isCommand     = (commCtrl & (uint8_t)CommunicationCtrl::commandBit) == (uint8_t)CommunicationCtrl::commandBit;
+	bool isDiscovery   = (commCtrl & (uint8_t)CommunicationCtrl::discoveryBit) == (uint8_t)CommunicationCtrl::discoveryBit;
+	bool isPing        = (commCtrl & (uint8_t)CommunicationCtrl::pingBit) == (uint8_t)CommunicationCtrl::pingBit;
+	bool isAcknowledge = (commCtrl & (uint8_t)CommunicationCtrl::acknowledgeBit) == (uint8_t)CommunicationCtrl::acknowledgeBit;
+	bool isWait        = (commCtrl & (uint8_t)CommunicationCtrl::waitBit) == (uint8_t)CommunicationCtrl::waitBit;
+	bool isError       = (commCtrl & (uint8_t)CommunicationCtrl::errorBit) == (uint8_t)CommunicationCtrl::errorBit;
 	
 	// Data control parameters
 	bool isRead    = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::read;
@@ -410,7 +420,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		// Return device firmware when asked to identify
-		sendAck(from, deviceId, commCtrl | ACK_BIT, (uint8_t)DataCtrl::integer, 0, FIRMWARE_VERSION);
+		sendAck(from, deviceId, commCtrl, (uint8_t)DataCtrl::integer, 0, FIRMWARE_VERSION);
 		return;
 	}
 
@@ -431,7 +441,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		// Pong
-		sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, 0, 0);
+		sendAck(from, deviceId, commCtrl, dataCtrl, 0, 0);
 		return;
 	}	
 
@@ -445,6 +455,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 	if (rx.id != (uint16_t)(CAN_BASE_ADDRESS + deviceId)) {
 		// Do not sent out error
 		return;
+	} else {
+		// TODO clear delays for other devices
 	}
 
 	// Config
@@ -459,7 +471,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		if (isConfigWrite == true && static_cast<ConfigOptions>(configOption) == ConfigOptions::writeEEPROM) {
 			// Store configuration into EEPROM
 			saveConfig();
-			sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, data);
+			sendAck(from, deviceId, commCtrl, configCtrl, port, data);
 			return;
 		}
 
@@ -548,9 +560,9 @@ void canProcessFrame(const CAN_message_t& rx) {
 					return;
 					break;	
 			}
-			sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, data);
+			sendAck(from, deviceId, commCtrl, configCtrl, port, data);
 			return;
-		} else if (isRead) {
+		} else if (isConfigRead) {
 			uint32_t confData = 0;
 			switch (static_cast<ConfigOptions>(configOption)) {
 				case ConfigOptions::buttonRisingEdge:
@@ -588,8 +600,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 							confData = actionMap[i].deviceId << 16 | actionMap[i].ports;
 							sendAck(from,
 								deviceId,
-								commCtrl | ACK_BIT | WAIT_BIT,
-								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigCtrl::read | (uint8_t)typeToActionConf[actionMap[i].type],
+								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								(uint8_t)ConfigCtrl::configBit | (uint8_t)typeToActionConf[actionMap[i].type],
 								port,
 								confData);
 							
@@ -597,15 +609,15 @@ void canProcessFrame(const CAN_message_t& rx) {
 								// Send information about action delay
 								sendAck(from,
 									deviceId,
-									commCtrl | ACK_BIT | WAIT_BIT,
-									(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigCtrl::read | (uint8_t)ConfigOptions::delay,
+									commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+									(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::delay,
 									port,
 									actionMap[i].delay);
 							}
 						}
 					}
 					// Send last package as empty
-					sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, 0);
+					sendAck(from, deviceId, commCtrl, configCtrl, port, 0);
 					return;
 				case ConfigOptions::bypassInstantly:
 					confData = inputConfig[port].bypassInstantly ? 1 : 0;
@@ -621,7 +633,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 					return;
 					break;
 			}
-			sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, confData);
+			sendAck(from, deviceId, commCtrl, configCtrl, port, confData);
 			return;
 		}
 
@@ -652,7 +664,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			}
 
 			// Send back updated value
-			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, outputDigitals[port].value);
+			sendAck(from, deviceId, commCtrl, dataCtrl, port, outputDigitals[port].value);
 		} else if (isToggle) {
 			// Only allow writing to output ports
 			if (isInput) {
@@ -673,11 +685,11 @@ void canProcessFrame(const CAN_message_t& rx) {
 			}
 
 			// Send back updated value
-			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, outputDigitals[port].value);
+			sendAck(from, deviceId, commCtrl, dataCtrl, port, outputDigitals[port].value);
 		} else if (isRead) {
 			// Send back digital input/output value
 			if (isBit) {
-				sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, isInput ? inputDigitals[port].value : outputDigitals[port].value);
+				sendAck(from, deviceId, commCtrl, dataCtrl, port, isInput ? inputDigitals[port].value : outputDigitals[port].value);
 			} else if (isByte) {
 				// TODO - TYPE_BYTE
 				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
@@ -823,7 +835,7 @@ void loop() {
 		// Take bypass actions
 		if (inputChanged) {
 			// Push event on input data changed
-			uint8_t commCtrl = EMPTY_BYTE;
+			uint8_t commCtrl = (uint8_t)CommunicationCtrl::empty;
 			uint8_t dataCtrl = (uint8_t)DataCtrl::input | (uint8_t)DataCtrl::bit;
 			// Push to a broadcast address
 			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].value);
@@ -861,11 +873,11 @@ void loop() {
 									} else {
 										// Send command to change remote output port
 										if (actionMap[gridDevIdx].type == TYPE_HIGH) {
-											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::write, outputPort, HIGH);
+											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, HIGH);
 										} else if (actionMap[gridDevIdx].type == TYPE_LOW) {
-											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::write, outputPort, LOW);
+											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, LOW);
 										} else if (actionMap[gridDevIdx].type == TYPE_TOGGLE) {
-											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::toggle, outputPort, 0);
+											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::toggle, outputPort, 0);
 										}
 									}
 								}
@@ -880,7 +892,7 @@ void loop() {
 		if (inputDigitals[inputPort].longpressRecorded == false && inputDigitals[inputPort].pressedTime > inputConfig[inputPort].longpress * 1000) {
 			inputDigitals[inputPort].longpressRecorded = true;
 			// Push event on input longpress
-			uint8_t commCtrl = EMPTY_BYTE;
+			uint8_t commCtrl = (uint8_t)CommunicationCtrl::empty;
 			uint8_t dataCtrl = (uint8_t)DataCtrl::input | (uint8_t)DataCtrl::bit;
 			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].pressedTime / 1000);
 
@@ -907,11 +919,11 @@ void loop() {
 								} else {
 									// Send command to change output port on deviceId
 									if (actionMap[gridDevIdx].type == TYPE_LONG_HIGH) {
-										canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::write, outputPort, HIGH);
+										canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, HIGH);
 									} else if (actionMap[gridDevIdx].type == TYPE_LONG_LOW) {
-										canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::write, outputPort, 0);
+										canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, 0);
 									} else if (actionMap[gridDevIdx].type == TYPE_LONG_TOGGLE) {
-										canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::toggle, outputPort, 0);
+										canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::toggle, outputPort, 0);
 									}
 								}
 							}
@@ -934,9 +946,9 @@ void loop() {
 				}
 			} else {
 				if (delays[delayIdx].type == TYPE_TOGGLE) {
-					canWriteFrame(delays[delayIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::toggle, delays[delayIdx].port, 0);
+					canWriteFrame(delays[delayIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::toggle, delays[delayIdx].port, 0);
 				} else {
-					canWriteFrame(delays[delayIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::write, delays[delayIdx].port, delays[delayIdx].type);
+					canWriteFrame(delays[delayIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, delays[delayIdx].port, delays[delayIdx].type);
 				}
 			}
 			removeDelay(delays[delayIdx].deviceId, delays[delayIdx].port);
