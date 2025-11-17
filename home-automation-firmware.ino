@@ -10,6 +10,7 @@
 #define EMPTY_BYTE        0x00
 
 // Communication control byte
+
 #define COMMAND_BIT       0x80
 #define DISCOVERY_BIT     0x40
 #define PING_BIT          0x20
@@ -17,17 +18,34 @@
 #define WAIT_BIT          0x08
 #define ERROR_BIT         0x04
 
-// Data control byte
-#define DATA_OPERATION_BIT  0x70
-#define DATA_SIGNAL_BIT     0x08
-#define DATA_DIRECTION_BIT  0x04
-#define DATA_TYPE_BIT       0x03
+// Data control
+enum class DataCtrl: uint8_t {
+	empty         = 0x00,
+	operationBits = 0x70,
+	signalBit     = 0x08,
+	directionBit  = 0x04,
+	dataTypeBits  = 0x03,
+	// Specific Types
+	read          = 0x00,
+	write         = 0x10,
+	toggle        = 0x20,
+	digital       = 0x00,
+	analog        = 0x08,
+	input         = 0x04,
+	output        = 0x00,
+	bit           = 0x00,
+	byte          = 0x01,
+	integer       = 0x02,
+	decimal       = 0x03,
+};
 
 // Config control
-enum class ConfigControl: uint8_t {
+enum class ConfigCtrl: uint8_t {
+	empty        = 0x00,
 	configBit    = 0x80,
 	operationBit = 0x40,
-	optionsBit   = 0x3F,
+	optionBits   = 0x3F,
+	// Specific Types
 	write        = 0x40,
 	read         = 0x00,
 };
@@ -56,20 +74,6 @@ enum class ConfigOptions: uint8_t {
 	bypassOnDIPSwitch  = 0b00010011, // Bypass determined by DIP switch
 	bypassOnDisconnect = 0b00010100 // Bypass on disconnect in milliseconds
 };
-
-// Protocol types
-#define TYPE_DIGITAL  0
-#define TYPE_ANALOG   1
-#define TYPE_OUTPUT   0
-#define TYPE_INPUT    1
-#define TYPE_BIT      0b00 // 00 = Bit
-#define TYPE_BYTE     0b01 // 01 = Byte (8-bit)
-#define TYPE_INT      0b10 // 10 = Integer (32-bit)
-#define TYPE_FLOAT    0b11 // 11 = Float
-#define TYPE_READ     0b000 // 000 = Read
-#define TYPE_WRITE    0b001 // 001 = Write
-#define TYPE_TOGGLE   0b010 // 010 = Toggle
-#define TYPE_RESERVED 0b11 // 11 = Reserved
 
 // Action map types
 #define TYPE_LOW            0b0000 // 0000 = LOW
@@ -229,7 +233,7 @@ void setDigitalOutput(uint8_t port, uint8_t value) {
 		// If value has changed, push data change frame
 		if (outputDigitals[port].value != value){
 			uint8_t commCtrl = 0x00;
-			uint8_t dataCtrl = TYPE_BIT;
+			uint8_t dataCtrl = (uint8_t)DataCtrl::bit;
 			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, port, value);
 		}
 
@@ -372,15 +376,23 @@ void canProcessFrame(const CAN_message_t& rx) {
 	bool isError       = (commCtrl & ERROR_BIT) >> 2;
 	
 	// Data control parameters
-	uint8_t operationType = (dataCtrl & DATA_OPERATION_BIT) >> 4;
-	bool isAnalog         = (dataCtrl & DATA_SIGNAL_BIT) >> 3;
-	bool isInput          = (dataCtrl & DATA_DIRECTION_BIT) >> 2;
-	uint8_t dataType      = (dataCtrl & DATA_TYPE_BIT);
+	bool isRead    = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::read;
+	bool isWrite   = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::write;
+	bool isToggle  = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::toggle;
+	bool isAnalog  = (dataCtrl & (uint8_t)DataCtrl::signalBit) == (uint8_t)DataCtrl::analog;
+	bool isDigital = (dataCtrl & (uint8_t)DataCtrl::signalBit) == (uint8_t)DataCtrl::digital;
+	bool isOutput  = (dataCtrl & (uint8_t)DataCtrl::directionBit) == (uint8_t)DataCtrl::output;
+	bool isInput   = (dataCtrl & (uint8_t)DataCtrl::directionBit) == (uint8_t)DataCtrl::input;
+	bool isBit     = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::bit;
+	bool isByte    = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::byte;
+	bool isInteger = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::integer;
+	bool isDecimal = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::decimal;
 
 	// Config control parameters
-	bool isConfig            = (configCtrl & (uint8_t)ConfigControl::configBit) >> 7;
-	bool isConfigWrite       = (configCtrl & (uint8_t)ConfigControl::operationBit) >> 6;
-	uint8_t configOption     = (configCtrl & (uint8_t)ConfigControl::optionsBit);
+	bool isConfig        = (configCtrl & (uint8_t)ConfigCtrl::configBit) == (uint8_t)ConfigCtrl::configBit;
+	bool isConfigRead    = (configCtrl & (uint8_t)ConfigCtrl::operationBit) == (uint8_t)ConfigCtrl::read;
+	bool isConfigWrite   = (configCtrl & (uint8_t)ConfigCtrl::operationBit) == (uint8_t)ConfigCtrl::write;
+	uint8_t configOption = (configCtrl & (uint8_t)ConfigCtrl::optionBits);
 
 	// Discovery
 	if (isDiscovery) {
@@ -392,13 +404,13 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Frame has to be sent to broadcast address
 			return;
 		}
-		if (operationType != TYPE_READ || isPing || isError || isConfig) {
+		if (isRead || isPing || isError || isConfig) {
 			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 
 		// Return device firmware when asked to identify
-		sendAck(from, deviceId, commCtrl | ACK_BIT, TYPE_INT << 2, 0, FIRMWARE_VERSION);
+		sendAck(from, deviceId, commCtrl | ACK_BIT, (uint8_t)DataCtrl::integer, 0, FIRMWARE_VERSION);
 		return;
 	}
 
@@ -413,7 +425,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		}
 
-		if (operationType != TYPE_READ || isError || isConfig) {
+		if (isRead || isError || isConfig) {
 			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
@@ -457,7 +469,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		}
 
-		if (isConfigWrite == TYPE_WRITE) {
+		if (isConfigWrite) {
 			uint8_t actionDeviceId = data >> 16;
 			uint16_t actionPorts = data & 0xFFF;
 
@@ -538,7 +550,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			}
 			sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, data);
 			return;
-		} else if (operationType == TYPE_READ) {
+		} else if (isRead) {
 			uint32_t confData = 0;
 			switch (static_cast<ConfigOptions>(configOption)) {
 				case ConfigOptions::buttonRisingEdge:
@@ -577,7 +589,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 							sendAck(from,
 								deviceId,
 								commCtrl | ACK_BIT | WAIT_BIT,
-								(uint8_t)ConfigControl::configBit | (uint8_t)ConfigControl::read | (uint8_t)typeToActionConf[actionMap[i].type],
+								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigCtrl::read | (uint8_t)typeToActionConf[actionMap[i].type],
 								port,
 								confData);
 							
@@ -586,7 +598,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 								sendAck(from,
 									deviceId,
 									commCtrl | ACK_BIT | WAIT_BIT,
-									(uint8_t)ConfigControl::configBit | (uint8_t)ConfigControl::read | (uint8_t)ConfigOptions::delay,
+									(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigCtrl::read | (uint8_t)ConfigOptions::delay,
 									port,
 									actionMap[i].delay);
 							}
@@ -620,18 +632,18 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Command - data operation
 	if (isCommand) {
-		if (operationType == TYPE_WRITE) {
+		if (isWrite) {
 			// Only allow writing to output ports
-			if (isInput == TYPE_INPUT) {
+			if (isInput) {
 				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 				return;
 			}
 
 			// Set output value
-			if (dataType == TYPE_BIT) {
+			if (isBit) {
 				// Write new value to output port
 				setDigitalOutput(port, data & 0x01);
-			} else if (dataType == TYPE_INT) {
+			} else if (isInteger) {
 				// Set delay
 				setDelay(deviceId, port, ((int32_t) data) > 0, data);
 			} else {
@@ -641,18 +653,18 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 			// Send back updated value
 			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, outputDigitals[port].value);
-		} else if (operationType == TYPE_TOGGLE) {
+		} else if (isToggle) {
 			// Only allow writing to output ports
-			if (isInput == TYPE_INPUT) {
+			if (isInput) {
 				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 				return;
 			}
 
 			// Toggle output value
-			if (dataType == TYPE_BIT) {
+			if (isBit) {
 				// Toggle value of output port
 				setDigitalOutput(port, outputDigitals[port].value == HIGH ? LOW : HIGH);
-			} else if (dataType == TYPE_INT) {
+			} else if (isInteger) {
 				// Set delay
 				setDelay(deviceId, port, outputDigitals[port].value  == HIGH ? LOW : HIGH, data);
 			} else {
@@ -662,17 +674,17 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 			// Send back updated value
 			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, outputDigitals[port].value);
-		} else if (operationType == TYPE_READ) {
+		} else if (isRead) {
 			// Send back digital input/output value
-			if (dataType == TYPE_BIT) {
-				sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, (isInput == TYPE_INPUT) ? inputDigitals[port].value : outputDigitals[port].value);
-			} else if (dataType == TYPE_BYTE) {
+			if (isBit) {
+				sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, isInput ? inputDigitals[port].value : outputDigitals[port].value);
+			} else if (isByte) {
 				// TODO - TYPE_BYTE
 				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
-			} else if (dataType == TYPE_INT) {
+			} else if (isInteger) {
 				// TODO - TYPE_INT
 				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
-			} else if (dataType == TYPE_FLOAT) {
+			} else if (isDecimal) {
 				// TODO - TYPE_FLOAT
 				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
 			}
@@ -812,7 +824,7 @@ void loop() {
 		if (inputChanged) {
 			// Push event on input data changed
 			uint8_t commCtrl = EMPTY_BYTE;
-			uint8_t dataCtrl = DATA_DIRECTION_BIT | TYPE_BIT;
+			uint8_t dataCtrl = (uint8_t)DataCtrl::input | (uint8_t)DataCtrl::bit;
 			// Push to a broadcast address
 			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].value);
 
@@ -849,11 +861,11 @@ void loop() {
 									} else {
 										// Send command to change remote output port
 										if (actionMap[gridDevIdx].type == TYPE_HIGH) {
-											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, HIGH);
+											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::write, outputPort, HIGH);
 										} else if (actionMap[gridDevIdx].type == TYPE_LOW) {
-											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, LOW);
+											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::write, outputPort, LOW);
 										} else if (actionMap[gridDevIdx].type == TYPE_TOGGLE) {
-											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_TOGGLE << 4, outputPort, 0);
+											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::toggle, outputPort, 0);
 										}
 									}
 								}
@@ -869,7 +881,7 @@ void loop() {
 			inputDigitals[inputPort].longpressRecorded = true;
 			// Push event on input longpress
 			uint8_t commCtrl = EMPTY_BYTE;
-			uint8_t dataCtrl = DATA_DIRECTION_BIT | TYPE_BIT;
+			uint8_t dataCtrl = (uint8_t)DataCtrl::input | (uint8_t)DataCtrl::bit;
 			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].pressedTime / 1000);
 
 
@@ -881,27 +893,25 @@ void loop() {
 				// Action longpress events
 				for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
 					if (actionMap[gridDevIdx].deviceId != 0xFF && actionMap[gridDevIdx].inputPort == inputPort) {
-						if (actionMap[gridDevIdx].type == TYPE_HIGH) {
-							for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
-								if (actionMap[gridDevIdx].ports & (1 << outputPort)) {
-									if (actionMap[gridDevIdx].deviceId == deviceId) {
-										// Change value of local output port
-										if (actionMap[gridDevIdx].type == TYPE_LONG_HIGH) {
-											setDigitalOutput(outputPort, HIGH);
-										} else if (actionMap[gridDevIdx].type == TYPE_LONG_LOW) {
-											setDigitalOutput(outputPort, LOW);
-										} else if (actionMap[gridDevIdx].type == TYPE_LONG_TOGGLE) {
-											setDigitalOutput(outputPort, outputDigitals[outputPort].value == HIGH ? LOW : HIGH);
-										}
-									} else {
-										// Send command to change output port on deviceId
-										if (actionMap[gridDevIdx].type == TYPE_LONG_HIGH) {
-											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, HIGH);
-										} else if (actionMap[gridDevIdx].type == TYPE_LONG_LOW) {
-											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, outputPort, 0);
-										} else if (actionMap[gridDevIdx].type == TYPE_LONG_TOGGLE) {
-											canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, TYPE_TOGGLE << 4, outputPort, 0);
-										}
+						for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
+							if (actionMap[gridDevIdx].ports & (1 << outputPort)) {
+								if (actionMap[gridDevIdx].deviceId == deviceId) {
+									// Change value of local output port
+									if (actionMap[gridDevIdx].type == TYPE_LONG_HIGH) {
+										setDigitalOutput(outputPort, HIGH);
+									} else if (actionMap[gridDevIdx].type == TYPE_LONG_LOW) {
+										setDigitalOutput(outputPort, LOW);
+									} else if (actionMap[gridDevIdx].type == TYPE_LONG_TOGGLE) {
+										setDigitalOutput(outputPort, outputDigitals[outputPort].value == HIGH ? LOW : HIGH);
+									}
+								} else {
+									// Send command to change output port on deviceId
+									if (actionMap[gridDevIdx].type == TYPE_LONG_HIGH) {
+										canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::write, outputPort, HIGH);
+									} else if (actionMap[gridDevIdx].type == TYPE_LONG_LOW) {
+										canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::write, outputPort, 0);
+									} else if (actionMap[gridDevIdx].type == TYPE_LONG_TOGGLE) {
+										canWriteFrame(actionMap[gridDevIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::toggle, outputPort, 0);
 									}
 								}
 							}
@@ -924,9 +934,9 @@ void loop() {
 				}
 			} else {
 				if (delays[delayIdx].type == TYPE_TOGGLE) {
-					canWriteFrame(delays[delayIdx].deviceId, deviceId, COMMAND_BIT, TYPE_TOGGLE << 4, delays[delayIdx].port, 0);
+					canWriteFrame(delays[delayIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::toggle, delays[delayIdx].port, 0);
 				} else {
-					canWriteFrame(delays[delayIdx].deviceId, deviceId, COMMAND_BIT, TYPE_WRITE << 4, delays[delayIdx].port, delays[delayIdx].type);
+					canWriteFrame(delays[delayIdx].deviceId, deviceId, COMMAND_BIT, (uint8_t)DataCtrl::write, delays[delayIdx].port, delays[delayIdx].type);
 				}
 			}
 			removeDelay(delays[delayIdx].deviceId, delays[delayIdx].port);
