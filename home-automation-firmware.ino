@@ -23,15 +23,17 @@
 #define DATA_DIRECTION_BIT  0x04
 #define DATA_TYPE_BIT       0x03
 
-// Config control byte
-#define CONFIG_BIT            0x80
-#define CONFIG_OPERATION_BIT  0x40
-#define CONFIG_WRITE_BIT      0x40
-#define CONFIG_READ_BIT       0x00
-#define CONFIG_OPTIONS_BIT    0x3F
+// Config control
+enum class ConfigControl: uint8_t {
+	configBit    = 0x80,
+	operationBit = 0x40,
+	optionsBit   = 0x3F,
+	write        = 0x40,
+	read         = 0x00,
+};
 
 // Config options
-enum class ConfigOptions : uint8_t {
+enum class ConfigOptions: uint8_t {
 	writeEEPROM        = 0b00000000, // Write all configuration into EEPROM
 	buttonRisingEdge   = 0b00000001, // Input acts as a Button on rising edge
 	buttonFallingEdge  = 0b00000010, // Input acts as a Button on falling edge
@@ -376,9 +378,9 @@ void canProcessFrame(const CAN_message_t& rx) {
 	uint8_t dataType      = (dataCtrl & DATA_TYPE_BIT);
 
 	// Config control parameters
-	bool isConfig            = (configCtrl & CONFIG_BIT) >> 7;
-	bool isConfigWrite       = (configCtrl & CONFIG_OPERATION_BIT) >> 6;
-	uint8_t configOption     = (configCtrl & CONFIG_OPTIONS_BIT);
+	bool isConfig            = (configCtrl & (uint8_t)ConfigControl::configBit) >> 7;
+	bool isConfigWrite       = (configCtrl & (uint8_t)ConfigControl::operationBit) >> 6;
+	uint8_t configOption     = (configCtrl & (uint8_t)ConfigControl::optionsBit);
 
 	// Discovery
 	if (isDiscovery) {
@@ -572,11 +574,21 @@ void canProcessFrame(const CAN_message_t& rx) {
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionMap[i].inputPort == port) {
 							confData = actionMap[i].deviceId << 16 | actionMap[i].ports;
-							sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, CONFIG_BIT | CONFIG_READ_BIT | (uint8_t)typeToActionConf[actionMap[i].type], port, confData);
+							sendAck(from,
+								deviceId,
+								commCtrl | ACK_BIT | WAIT_BIT,
+								(uint8_t)ConfigControl::configBit | (uint8_t)ConfigControl::read | (uint8_t)typeToActionConf[actionMap[i].type],
+								port,
+								confData);
 							
 							if (actionMap[i].delay != 0) {
 								// Send information about action delay
-								sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, CONFIG_BIT | CONFIG_READ_BIT | (uint8_t)ConfigOptions::delay, port, actionMap[i].delay);
+								sendAck(from,
+									deviceId,
+									commCtrl | ACK_BIT | WAIT_BIT,
+									(uint8_t)ConfigControl::configBit | (uint8_t)ConfigControl::read | (uint8_t)ConfigOptions::delay,
+									port,
+									actionMap[i].delay);
 							}
 						}
 					}
