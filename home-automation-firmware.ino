@@ -9,7 +9,7 @@
 // Use for both communictaion byte and data byte
 #define EMPTY_BYTE        0x00
 
-// CommCtrl Byte
+// Communication control byte
 #define COMMAND_BIT       0x80
 #define DISCOVERY_BIT     0x40
 #define PING_BIT          0x20
@@ -17,35 +17,41 @@
 #define WAIT_BIT          0x08
 #define ERROR_BIT         0x04
 
-// DataCtrl Byte
-#define DATA_CONFIG_BIT     0x80
-#define DATA_EEPROM_BIT     0x40
-#define DATA_OPERATION_BIT  0x30
+// Data control byte
+#define DATA_OPERATION_BIT  0x70
 #define DATA_SIGNAL_BIT     0x08
 #define DATA_DIRECTION_BIT  0x04
 #define DATA_TYPE_BIT       0x03
 
-// ConfCtrl Byte Enums
-#define CONF_BUTTON_RISING_EDGE    0b00000 // Input acts as a Button on rising edge
-#define CONF_BUTTON_FALLIN_EDGE    0b00001 // Input acts as a Button on falling edge
-#define CONF_SWITCH                0b00010 // Input acts as Switch
-#define CONF_DEBOUNCE              0b00011 // Debounce in microseconds
-#define CONF_LONGPRESS             0b00100 // Longpress in milliseconds
-#define CONF_DOUBLECLICK           0b00101 // Double-click in milliseconds
-#define CONF_DELAY                 0b00110 // Delay action in milliseconds
-#define CONF_ACTIONS               0b00111 // Get/Reset all actions
-#define CONF_ACTION_TOGGLE         0b01000 // Action toggle output pins
-#define CONF_ACTION_HIGH           0b01001 // Action high output pins
-#define CONF_ACTION_LOW            0b01010 // Action low output pins
-#define CONF_ACTION_LONG_TOGGLE    0b01011 // Action longpress toggle output pins
-#define CONF_ACTION_LONG_HIGH      0b01100 // Action longpress high output pins
-#define CONF_ACTION_LONG_LOW       0b01101 // Action longpress low output pins
-#define CONF_ACTION_DOUBLE_TOGGLE  0b01110 // Action double-click toggle output pins
-#define CONF_ACTION_DOUBLE_HIGH    0b01111 // Action double-click high output pins
-#define CONF_ACTION_DOUBLE_LOW     0b10000 // Action double-click low output pins
-#define CONF_BYPASS_INSTANTLY      0b10001 // Bypass Instantly
-#define CONF_BYPASS_ON_DIP_SWITCH  0b10010 // Bypass determined by DIP switch
-#define CONF_BYPASS_ON_DISCONNECT  0b10011 // Bypass on disconnect in milliseconds
+// Config control byte
+#define CONFIG_BIT            0x80
+#define CONFIG_OPERATION_BIT  0x40
+#define CONFIG_WRITE_BIT      0x40
+#define CONFIG_READ_BIT       0x00
+#define CONFIG_OPTIONS_BIT    0x3F
+
+// Config options
+#define CONFIG_WRITE_EEPROM          0b00000 // Write all configuration into EEPROM
+#define CONFIG_BUTTON_RISING_EDGE    0b00001 // Input acts as a Button on rising edge
+#define CONFIG_BUTTON_FALLIN_EDGE    0b00010 // Input acts as a Button on falling edge
+#define CONFIG_SWITCH                0b00011 // Input acts as Switch
+#define CONFIG_DEBOUNCE              0b00100 // Debounce in microseconds
+#define CONFIG_LONGPRESS             0b00101 // Longpress in milliseconds
+#define CONFIG_DOUBLECLICK           0b00110 // Double-click in milliseconds
+#define CONFIG_DELAY                 0b00111 // Delay action in milliseconds
+#define CONFIG_ACTIONS               0b01000 // Get/Reset all actions
+#define CONFIG_ACTION_TOGGLE         0b01001 // Action toggle output pins
+#define CONFIG_ACTION_HIGH           0b01010 // Action high output pins
+#define CONFIG_ACTION_LOW            0b01011 // Action low output pins
+#define CONFIG_ACTION_LONG_TOGGLE    0b01100 // Action longpress toggle output pins
+#define CONFIG_ACTION_LONG_HIGH      0b01101 // Action longpress high output pins
+#define CONFIG_ACTION_LONG_LOW       0b01110 // Action longpress low output pins
+#define CONFIG_ACTION_DOUBLE_TOGGLE  0b01111 // Action double-click toggle output pins
+#define CONFIG_ACTION_DOUBLE_HIGH    0b10000 // Action double-click high output pins
+#define CONFIG_ACTION_DOUBLE_LOW     0b10001 // Action double-click low output pins
+#define CONFIG_BYPASS_INSTANTLY      0b10010 // Bypass Instantly
+#define CONFIG_BYPASS_ON_DIP_SWITCH  0b10011 // Bypass determined by DIP switch
+#define CONFIG_BYPASS_ON_DISCONNECT  0b10100 // Bypass on disconnect in milliseconds
 
 // Protocol types
 #define TYPE_DIGITAL  0
@@ -56,10 +62,11 @@
 #define TYPE_BYTE     0b01 // 01 = Byte (8-bit)
 #define TYPE_INT      0b10 // 10 = Integer (32-bit)
 #define TYPE_FLOAT    0b11 // 11 = Float
-#define TYPE_READ     0b00 // 00 = Read
-#define TYPE_WRITE    0b01 // 01 = Write
-#define TYPE_TOGGLE   0b10 // 10 = Toggle
+#define TYPE_READ     0b000 // 000 = Read
+#define TYPE_WRITE    0b001 // 001 = Write
+#define TYPE_TOGGLE   0b010 // 010 = Toggle
 #define TYPE_RESERVED 0b11 // 11 = Reserved
+
 // Action map types
 #define TYPE_LOW            0b0000 // 0000 = LOW
 #define TYPE_HIGH           0b0001 // 0001 = HIGH
@@ -345,12 +352,12 @@ void canProcessFrame(const CAN_message_t& rx) {
 	if (rx.len != 8) return;
 
 	// Unpack payload
-	uint8_t from     = rx.buf[0];        // B1
-	uint8_t commCtrl = rx.buf[1];        // B2
-	uint8_t dataCtrl = rx.buf[2];        // B3
-	uint8_t port     = rx.buf[3];        // B4
-	uint32_t data    = 0x00;
-	uint8_t conf     = 0x00;
+	uint8_t from       = rx.buf[0];        // B1
+	uint8_t commCtrl   = rx.buf[1];        // B2
+	uint8_t dataCtrl   = rx.buf[2];        // B3
+	uint8_t configCtrl = rx.buf[2];        // B3
+	uint8_t port       = rx.buf[3];        // B4
+	uint32_t data = ((uint32_t)rx.buf[4] << 24) | ((uint32_t)rx.buf[5] << 16) | ((uint32_t)rx.buf[6] << 8) | (uint32_t)rx.buf[7]; // B5..B8
 
 	// Communication control parameters
 	bool isCommand     = (commCtrl & COMMAND_BIT) >> 7;
@@ -361,12 +368,15 @@ void canProcessFrame(const CAN_message_t& rx) {
 	bool isError       = (commCtrl & ERROR_BIT) >> 2;
 	
 	// Data control parameters
-	bool isConfig         = (dataCtrl & DATA_CONFIG_BIT) >> 7;
-	bool isWriteEEPROM    = (dataCtrl & DATA_EEPROM_BIT) >> 6;
 	uint8_t operationType = (dataCtrl & DATA_OPERATION_BIT) >> 4;
 	bool isAnalog         = (dataCtrl & DATA_SIGNAL_BIT) >> 3;
 	bool isInput          = (dataCtrl & DATA_DIRECTION_BIT) >> 2;
 	uint8_t dataType      = (dataCtrl & DATA_TYPE_BIT);
+
+	// Config control parameters
+	bool isConfig            = (configCtrl & CONFIG_BIT) >> 7;
+	bool isConfigWrite       = (configCtrl & CONFIG_OPERATION_BIT) >> 6;
+	uint8_t config           = (configCtrl & CONFIG_OPTIONS_BIT);
 
 	// Discovery
 	if (isDiscovery) {
@@ -378,7 +388,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Frame has to be sent to broadcast address
 			return;
 		}
-		if (operationType != TYPE_READ || isPing || isError || isConfig || isWriteEEPROM) {
+		if (operationType != TYPE_READ || isPing || isError || isConfig) {
 			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
@@ -399,7 +409,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		}
 
-		if (operationType != TYPE_READ || isError || isConfig || isWriteEEPROM) {
+		if (operationType != TYPE_READ || isError || isConfig) {
 			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
@@ -423,64 +433,53 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Config
 	if (isConfig) {
-		// Get config options
-		uint8_t conf = rx.buf[4];
-		// Get data from B6..B8
-		data = (((uint32_t)rx.buf[5] << 16) | ((uint32_t)rx.buf[6] << 8) | (uint32_t)rx.buf[7]);
-
 		// Validate communication byte
 		if (!isCommand || isError) {
-			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			sendError(from, deviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 
 		// Write current configuration to EEPROM
-		if (isWriteEEPROM) {
+		if (isConfigWrite == true && config == CONFIG_WRITE_EEPROM) {
 			// Store configuration into EEPROM
 			saveConfig();
-			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, data);
-			return;
-		}
-
-		// Validate data config byte
-		if (!isInput || isAnalog) {
-			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, data);
 			return;
 		}
 
 		// Validate port range
 		if (port > 15) {
-			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_INVALID_PORT);
+			sendError(from, deviceId, commCtrl, configCtrl, port, ERR_INVALID_PORT);
 			return;
 		}
 
-		if (operationType == TYPE_WRITE) {
-			uint8_t actionDeviceId;
-			uint32_t actionPorts;
+		if (isConfigWrite == TYPE_WRITE) {
+			uint8_t actionDeviceId = data >> 16;
+			uint16_t actionPorts = data & 0xFFF;
 
-			switch (conf) {
-				case CONF_BUTTON_RISING_EDGE:
+			switch (config) {
+				case CONFIG_BUTTON_RISING_EDGE:
 					inputConfig[port].isButtonRisingEdge = data > 0;
 					break;
-				case CONF_BUTTON_FALLIN_EDGE:
+				case CONFIG_BUTTON_FALLIN_EDGE:
 					inputConfig[port].isButtonFallingEdge = data > 0;
 					break;
-				case CONF_SWITCH:
+				case CONFIG_SWITCH:
 					inputConfig[port].isSwitch = data > 0;
 					break;
-				case CONF_DEBOUNCE:
+				case CONFIG_DEBOUNCE:
 					inputConfig[port].debounce = data;
 					break;
-				case CONF_LONGPRESS:
+				case CONFIG_LONGPRESS:
 					inputConfig[port].longpress = data;
 					break;
-				case CONF_DOUBLECLICK:
+				case CONFIG_DOUBLECLICK:
 					inputConfig[port].doubleclick = data;
 					break;
-				case CONF_DELAY:
+				case CONFIG_DELAY:
 					updateActionDelay(data);
 					break;
-				case CONF_ACTIONS:
+				case CONFIG_ACTIONS:
 					// Remove all actions for specific port
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionMap[i].inputPort == port) {
@@ -492,122 +491,118 @@ void canProcessFrame(const CAN_message_t& rx) {
 						}
 					}
 					break;
-				case CONF_ACTION_TOGGLE:
-					updateActionMap(data >> 16, port, TYPE_TOGGLE, data & 0x00FFFF);
+				case CONFIG_ACTION_TOGGLE:
+					updateActionMap(actionDeviceId, port, TYPE_TOGGLE, actionPorts);
 					break;
-				case CONF_ACTION_HIGH:
-					updateActionMap(data >> 16, port, TYPE_HIGH, data & 0x00FFFF);
+				case CONFIG_ACTION_HIGH:
+					updateActionMap(actionDeviceId, port, TYPE_HIGH, actionPorts);
 					break;
-				case CONF_ACTION_LOW:
-					updateActionMap(data >> 16, port, TYPE_LOW, data & 0x00FFFF);
+				case CONFIG_ACTION_LOW:
+					updateActionMap(actionDeviceId, port, TYPE_LOW, actionPorts);
 					break;
-				case CONF_ACTION_LONG_TOGGLE:
-					updateActionMap(data >> 16, port, TYPE_LONG_TOGGLE, data & 0x00FFFF);
+				case CONFIG_ACTION_LONG_TOGGLE:
+					updateActionMap(actionDeviceId, port, TYPE_LONG_TOGGLE, actionPorts);
 					break;
-				case CONF_ACTION_LONG_HIGH:
-					updateActionMap(data >> 16, port, TYPE_LONG_HIGH, data & 0x00FFFF);
+				case CONFIG_ACTION_LONG_HIGH:
+					updateActionMap(actionDeviceId, port, TYPE_LONG_HIGH, actionPorts);
 					break;
-				case CONF_ACTION_LONG_LOW:
-					updateActionMap(data >> 16, port, TYPE_LONG_LOW, data & 0x00FFFF);
+				case CONFIG_ACTION_LONG_LOW:
+					updateActionMap(actionDeviceId, port, TYPE_LONG_LOW, actionPorts);
 					break;
-				case CONF_ACTION_DOUBLE_TOGGLE:
-					updateActionMap(data >> 16, port, TYPE_DOUBLE_TOGGLE, data & 0x00FFFF);
+				case CONFIG_ACTION_DOUBLE_TOGGLE:
+					updateActionMap(actionDeviceId, port, TYPE_DOUBLE_TOGGLE, actionPorts);
 					break;
-				case CONF_ACTION_DOUBLE_HIGH:
-					updateActionMap(data >> 16, port, TYPE_DOUBLE_HIGH, data & 0x00FFFF);
+				case CONFIG_ACTION_DOUBLE_HIGH:
+					updateActionMap(actionDeviceId, port, TYPE_DOUBLE_HIGH, actionPorts);
 					break;
-				case CONF_ACTION_DOUBLE_LOW:
-					updateActionMap(data >> 16, port, TYPE_DOUBLE_LOW, data & 0x00FFFF);
+				case CONFIG_ACTION_DOUBLE_LOW:
+					updateActionMap(actionDeviceId, port, TYPE_DOUBLE_LOW, actionPorts);
 					break;
-				case CONF_BYPASS_INSTANTLY:
+				case CONFIG_BYPASS_INSTANTLY:
 					inputConfig[port].bypassInstantly = data > 0;
 					break;
-				case CONF_BYPASS_ON_DIP_SWITCH:
+				case CONFIG_BYPASS_ON_DIP_SWITCH:
 					inputConfig[port].bypassOnDIPSwitch = data > 0;
 					break;
-				case CONF_BYPASS_ON_DISCONNECT:
+				case CONFIG_BYPASS_ON_DISCONNECT:
 					inputConfig[port].bypassOnDisconnect = data;
 					break;
 				default:
-					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+					sendError(from, deviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 					return;
 					break;	
 			}
-			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, ((uint32_t)conf << 24) | data);
+			sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, data);
 			return;
 		} else if (operationType == TYPE_READ) {
-			uint32_t confData = 0x0;
-			switch (conf) {
-				case CONF_BUTTON_RISING_EDGE:
+			uint32_t confData = 0;
+			switch (config) {
+				case CONFIG_BUTTON_RISING_EDGE:
 					confData = inputConfig[port].isButtonRisingEdge ? 1 : 0;
 					break;
-				case CONF_BUTTON_FALLIN_EDGE:
+				case CONFIG_BUTTON_FALLIN_EDGE:
 					confData = inputConfig[port].isButtonFallingEdge ? 1 : 0;
 					break;
-				case CONF_SWITCH:
+				case CONFIG_SWITCH:
 					confData = inputConfig[port].isSwitch ? 1 : 0;
 					break;
-				case CONF_DEBOUNCE:
-					confData = ((uint32_t)inputConfig[port].debounce) & 0x00FFFFFFU;
+				case CONFIG_DEBOUNCE:
+					confData = ((uint32_t)inputConfig[port].debounce);
 					break;
-				case CONF_LONGPRESS:
-					confData = ((uint32_t)inputConfig[port].longpress) & 0x00FFFFFFU;
+				case CONFIG_LONGPRESS:
+					confData = ((uint32_t)inputConfig[port].longpress);
 					break;
-				case CONF_DOUBLECLICK:
-					confData = ((uint32_t)inputConfig[port].doubleclick) & 0x00FFFFFFU;
+				case CONFIG_DOUBLECLICK:
+					confData = ((uint32_t)inputConfig[port].doubleclick);
 					break;
-				case CONF_ACTIONS:
+				case CONFIG_ACTIONS:
 					uint8_t typeToActionConf[9];
-					typeToActionConf[TYPE_LOW] = CONF_ACTION_LOW;
-					typeToActionConf[TYPE_HIGH] = CONF_ACTION_HIGH;
-					typeToActionConf[TYPE_TOGGLE] = CONF_ACTION_TOGGLE;
-					typeToActionConf[TYPE_LONG_LOW] = CONF_ACTION_LONG_LOW;
-					typeToActionConf[TYPE_LONG_HIGH] = CONF_ACTION_LONG_HIGH;
-					typeToActionConf[TYPE_LONG_TOGGLE] = CONF_ACTION_LONG_TOGGLE;
-					typeToActionConf[TYPE_DOUBLE_LOW] = CONF_ACTION_DOUBLE_LOW;
-					typeToActionConf[TYPE_DOUBLE_HIGH] = CONF_ACTION_DOUBLE_HIGH;
-					typeToActionConf[TYPE_DOUBLE_TOGGLE] = CONF_ACTION_DOUBLE_TOGGLE;
+					typeToActionConf[TYPE_LOW] = CONFIG_ACTION_LOW;
+					typeToActionConf[TYPE_HIGH] = CONFIG_ACTION_HIGH;
+					typeToActionConf[TYPE_TOGGLE] = CONFIG_ACTION_TOGGLE;
+					typeToActionConf[TYPE_LONG_LOW] = CONFIG_ACTION_LONG_LOW;
+					typeToActionConf[TYPE_LONG_HIGH] = CONFIG_ACTION_LONG_HIGH;
+					typeToActionConf[TYPE_LONG_TOGGLE] = CONFIG_ACTION_LONG_TOGGLE;
+					typeToActionConf[TYPE_DOUBLE_LOW] = CONFIG_ACTION_DOUBLE_LOW;
+					typeToActionConf[TYPE_DOUBLE_HIGH] = CONFIG_ACTION_DOUBLE_HIGH;
+					typeToActionConf[TYPE_DOUBLE_TOGGLE] = CONFIG_ACTION_DOUBLE_TOGGLE;
 					// Send configurations for output ports related to all devices on grid
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionMap[i].inputPort == port) {
 							confData = actionMap[i].deviceId << 16 | actionMap[i].ports;
-							sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, dataCtrl, port, (typeToActionConf[actionMap[i].type] << 24) | confData);
+							sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, CONFIG_BIT | CONFIG_READ_BIT | typeToActionConf[actionMap[i].type], port, confData);
 							
 							if (actionMap[i].delay != 0) {
 								// Send information about action delay
-								sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, dataCtrl, port, (CONF_DELAY << 24) | actionMap[i].delay);
+								sendAck(from, deviceId, commCtrl | ACK_BIT | WAIT_BIT, CONFIG_BIT | CONFIG_READ_BIT | CONFIG_DELAY, port, actionMap[i].delay);
 							}
 						}
 					}
 					// Send last package as empty
-					sendAck(from, deviceId, commCtrl | ACK_BIT | EMPTY_BYTE, dataCtrl, port, (uint32_t)conf << 24);
+					sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, 0);
 					return;
-				case CONF_BYPASS_INSTANTLY:
+				case CONFIG_BYPASS_INSTANTLY:
 					confData = inputConfig[port].bypassInstantly ? 1 : 0;
 					break;
-				case CONF_BYPASS_ON_DIP_SWITCH:
+				case CONFIG_BYPASS_ON_DIP_SWITCH:
 					confData = inputConfig[port].bypassOnDIPSwitch ? 1 : 0;
 					break;
-				case CONF_BYPASS_ON_DISCONNECT:
-					confData = ((uint32_t)inputConfig[port].bypassOnDisconnect) & 0x00FFFFFFU;
+				case CONFIG_BYPASS_ON_DISCONNECT:
+					confData = inputConfig[port].bypassOnDisconnect;
 					break;
 				default:
-					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+					sendError(from, deviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 					return;
 					break;
 			}
-			sendAck(from, deviceId, commCtrl | ACK_BIT, dataCtrl, port, ((uint32_t)conf << 24) | confData);
+			sendAck(from, deviceId, commCtrl | ACK_BIT, configCtrl, port, confData);
 			return;
 		}
 
 		// Operation must be Read or Write
-		sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+		sendError(from, deviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 		return;
 	}
-
-	// From this point frame is general command to read, write, toggle input/output ports
-	// Extract data from B5..B8
-	data = ((uint32_t)rx.buf[4] << 24) | ((uint32_t)rx.buf[5] << 16) | ((uint32_t)rx.buf[6] << 8) | (uint32_t)rx.buf[7];
 
 	// Command - data operation
 	if (isCommand) {
