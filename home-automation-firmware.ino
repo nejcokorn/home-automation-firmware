@@ -51,27 +51,27 @@ enum class ConfigCtrl: uint8_t {
 
 // Config options
 enum class ConfigOptions: uint8_t {
-	writeEEPROM        = 0b00000000, // Write all configuration into EEPROM
-	buttonRisingEdge   = 0b00000001, // Input acts as a Button on rising edge
-	buttonFallingEdge  = 0b00000010, // Input acts as a Button on falling edge
-	switcher           = 0b00000011, // Input acts as Switch
-	debounce           = 0b00000100, // Debounce in microseconds
-	longpress          = 0b00000101, // Longpress in milliseconds
-	doubleclick        = 0b00000110, // Double-click in milliseconds
-	delay              = 0b00000111, // Delay action in milliseconds
-	actions            = 0b00001000, // Get/Reset all actions
-	actionToggle       = 0b00001001, // Action toggle output pins
-	actionHigh         = 0b00001010, // Action high output pins
-	actionLow          = 0b00001011, // Action low output pins
-	actionLongToggle   = 0b00001100, // Action longpress toggle output pins
-	actionLongHigh     = 0b00001101, // Action longpress high output pins
-	actionLongLow      = 0b00001110, // Action longpress low output pins
-	actionDoubleToggle = 0b00001111, // Action double-click toggle output pins
-	actionDoubleHigh   = 0b00010000, // Action double-click high output pins
-	actionDoubleLow    = 0b00010001, // Action double-click low output pins
-	bypassInstantly    = 0b00010010, // Bypass Instantly
-	bypassOnDIPSwitch  = 0b00010011, // Bypass determined by DIP switch
-	bypassOnDisconnect = 0b00010100 // Bypass on disconnect in milliseconds
+	writeEEPROM             = 0b00000000, // Write all configuration into EEPROM
+	buttonRisingEdge        = 0b00000001, // Input acts as a Button on rising edge
+	buttonFallingEdge       = 0b00000010, // Input acts as a Button on falling edge
+	switcher                = 0b00000011, // Input acts as Switch
+	debounce                = 0b00000100, // Debounce in microseconds
+	longpress               = 0b00000101, // Longpress in milliseconds
+	doubleclick             = 0b00000110, // Double-click in milliseconds
+	delay                   = 0b00000111, // Delay action in milliseconds
+	actions                 = 0b00001000, // Get/Reset all actions
+	actionToggle            = 0b00001001, // Action toggle output pins
+	actionHigh              = 0b00001010, // Action high output pins
+	actionLow               = 0b00001011, // Action low output pins
+	actionLongpressToggle   = 0b00001100, // Action longpress toggle output pins
+	actionLongpressHigh     = 0b00001101, // Action longpress high output pins
+	actionLongpressLow      = 0b00001110, // Action longpress low output pins
+	actionDoubleclickToggle = 0b00001111, // Action double-click toggle output pins
+	actionDoubleclickHigh   = 0b00010000, // Action double-click high output pins
+	actionDoubleclickLow    = 0b00010001, // Action double-click low output pins
+	bypassInstantly         = 0b00010010, // Bypass Instantly
+	bypassOnDIPSwitch       = 0b00010011, // Bypass determined by DIP switch
+	bypassOnDisconnect      = 0b00010100 // Bypass on disconnect in milliseconds
 };
 
 // Action map types
@@ -528,22 +528,22 @@ void canProcessFrame(const CAN_message_t& rx) {
 				case ConfigOptions::actionLow:
 					updateActionMap(actionDeviceId, port, TYPE_LOW, actionPorts);
 					break;
-				case ConfigOptions::actionLongToggle:
+				case ConfigOptions::actionLongpressToggle:
 					updateActionMap(actionDeviceId, port, TYPE_LONG_TOGGLE, actionPorts);
 					break;
-				case ConfigOptions::actionLongHigh:
+				case ConfigOptions::actionLongpressHigh:
 					updateActionMap(actionDeviceId, port, TYPE_LONG_HIGH, actionPorts);
 					break;
-				case ConfigOptions::actionLongLow:
+				case ConfigOptions::actionLongpressLow:
 					updateActionMap(actionDeviceId, port, TYPE_LONG_LOW, actionPorts);
 					break;
-				case ConfigOptions::actionDoubleToggle:
+				case ConfigOptions::actionDoubleclickToggle:
 					updateActionMap(actionDeviceId, port, TYPE_DOUBLE_TOGGLE, actionPorts);
 					break;
-				case ConfigOptions::actionDoubleHigh:
+				case ConfigOptions::actionDoubleclickHigh:
 					updateActionMap(actionDeviceId, port, TYPE_DOUBLE_HIGH, actionPorts);
 					break;
-				case ConfigOptions::actionDoubleLow:
+				case ConfigOptions::actionDoubleclickLow:
 					updateActionMap(actionDeviceId, port, TYPE_DOUBLE_LOW, actionPorts);
 					break;
 				case ConfigOptions::bypassInstantly:
@@ -588,12 +588,12 @@ void canProcessFrame(const CAN_message_t& rx) {
 					typeToActionConf[TYPE_LOW] = ConfigOptions::actionLow;
 					typeToActionConf[TYPE_HIGH] = ConfigOptions::actionHigh;
 					typeToActionConf[TYPE_TOGGLE] = ConfigOptions::actionToggle;
-					typeToActionConf[TYPE_LONG_LOW] = ConfigOptions::actionLongLow;
-					typeToActionConf[TYPE_LONG_HIGH] = ConfigOptions::actionLongHigh;
-					typeToActionConf[TYPE_LONG_TOGGLE] = ConfigOptions::actionLongToggle;
-					typeToActionConf[TYPE_DOUBLE_LOW] = ConfigOptions::actionDoubleLow;
-					typeToActionConf[TYPE_DOUBLE_HIGH] = ConfigOptions::actionDoubleHigh;
-					typeToActionConf[TYPE_DOUBLE_TOGGLE] = ConfigOptions::actionDoubleToggle;
+					typeToActionConf[TYPE_LONG_LOW] = ConfigOptions::actionLongpressLow;
+					typeToActionConf[TYPE_LONG_HIGH] = ConfigOptions::actionLongpressHigh;
+					typeToActionConf[TYPE_LONG_TOGGLE] = ConfigOptions::actionLongpressToggle;
+					typeToActionConf[TYPE_DOUBLE_LOW] = ConfigOptions::actionDoubleclickLow;
+					typeToActionConf[TYPE_DOUBLE_HIGH] = ConfigOptions::actionDoubleclickHigh;
+					typeToActionConf[TYPE_DOUBLE_TOGGLE] = ConfigOptions::actionDoubleclickToggle;
 					// Send configurations for output ports related to all devices on grid
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionMap[i].inputPort == port) {
