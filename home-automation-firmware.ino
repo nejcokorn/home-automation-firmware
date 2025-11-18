@@ -466,7 +466,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Frame has to be sent to broadcast address
 			return;
 		}
-		if (isRead || isPing || isError || isConfig) {
+		if (isWrite || isPing || isError || isConfig) {
 			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
@@ -487,7 +487,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		}
 
-		if (isRead || isError || isConfig) {
+		if (isWrite || isError || isConfig) {
 			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
