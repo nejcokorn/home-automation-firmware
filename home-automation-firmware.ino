@@ -27,7 +27,9 @@ enum class DataCtrl: uint8_t {
 	// Specific Types
 	read          = 0x00,
 	write         = 0x10,
-	toggle        = 0x20,
+	extra         = 0x20,
+	delay         = 0x30,
+	listDelays    = 0x40,
 	digital       = 0x00,
 	analog        = 0x08,
 	input         = 0x04,
@@ -71,20 +73,21 @@ enum class ConfigOptions: uint8_t {
 	actionDoubleclickLow    = 0b00010001, // Action double-click low output pins
 	bypassInstantly         = 0b00010010, // Bypass Instantly
 	bypassOnDIPSwitch       = 0b00010011, // Bypass determined by DIP switch
-	bypassOnDisconnect      = 0b00010100 // Bypass on disconnect in milliseconds
+	bypassOnDisconnect      = 0b00010100, // Bypass on disconnect in milliseconds
 };
 
 // Action types
-enum class ActionTypes: uint8_t {
-	low               = 0b0000,
-	high              = 0b0001,
-	toggle            = 0b0011,
-	longpressLow      = 0b0100,
-	longpressHigh     = 0b0101,
-	longpressToggle   = 0b0111,
-	doubleclickLow    = 0b1000,
-	doubleclickHigh   = 0b1001,
-	doubleclickToggle = 0b1011,
+enum class ActionType: uint8_t {
+	low    = LOW,
+	high   = HIGH,
+	toggle = 0b10,
+	pwm    = 0b11,
+};
+
+enum class ActionMode: uint8_t {
+	normal      = 0b00,
+	longpress   = 0b01,
+	doubleclick = 0b10,
 };
 
 // Sizes
@@ -140,7 +143,7 @@ struct Delay {
 	bool active;
 	uint8_t deviceId;
 	uint8_t port;
-	uint8_t type;
+	ActionType type;
 	int64_t time;
 };
 Delay delays[SIZE_DELAYS];
@@ -148,9 +151,27 @@ Delay delays[SIZE_DELAYS];
 struct ActionItem {
 	uint8_t deviceId;
 	uint8_t inputPort;
-	uint8_t type;
+	ActionType type;
+	ActionMode mode;
 	uint16_t ports;
 	uint32_t delay;
+};
+
+struct Command {
+	bool isInput;
+	bool isOutput;
+	bool isRead;
+	bool isWrite;
+	bool isAnalog;
+	bool isDigital;
+	bool isBit;
+	bool isByte;
+	bool isInteger;
+	bool isDecimal;
+	uint8_t port;
+	uint32_t delay;
+	uint32_t extra;
+	ActionType type;
 };
 
 struct ConfigRegister {
@@ -169,6 +190,8 @@ struct ConfigRegister {
 ConfigRegister inputConfig[SIZE_INPUT_DIGITAL];
 ActionItem actionItems[SIZE_ACTION_MAP];
 ActionItem* lastActionItem = nullptr;
+Command execCommand;
+ConfigOptions actionToConfigType[3][3];
 
 // Global variables
 int32_t loopTimeDiff = 0;
@@ -240,8 +263,16 @@ void sendError(uint8_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uin
 }
 
 // Change status of the output port
-void setDigitalOutput(uint8_t port, uint8_t value) {
+void setDigitalOutput(uint8_t port, ActionType actionType) {
 	if (port < SIZE_OUTPUT_DIGITAL) {
+		// Calculate new value
+		uint32_t value;
+		if (actionType == ActionType::toggle){
+			value = outputDigitals[port].value == HIGH ? LOW : HIGH;
+		} else {
+			// LOW/HIGH
+			value = (uint32_t)actionType;
+		}
 		// If value has changed, push data change frame
 		if (outputDigitals[port].value != value){
 			uint8_t commCtrl = 0x00;
@@ -258,7 +289,7 @@ void setDigitalOutput(uint8_t port, uint8_t value) {
 	}
 }
 
-void setDelay(uint8_t delayDeviceId, uint8_t port, uint8_t type, uint32_t delay) {
+void setDelay(uint8_t delayDeviceId, uint8_t port, ActionType type, uint32_t delay) {
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (!delays[delayIdx].active) {
 			delays[delayIdx].active = true;
@@ -277,7 +308,7 @@ void removeDelay(uint8_t delayDeviceId, uint8_t port) {
 			delays[delayIdx].active = false;
 			delays[delayIdx].deviceId = 0xFF;
 			delays[delayIdx].port = 0;
-			delays[delayIdx].type = 0; 
+			delays[delayIdx].type = ActionType::low; 
 			delays[delayIdx].time = 0;
 			return;
 		}
@@ -304,7 +335,8 @@ void resetConfig() {
 	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
 		actionItems[i].deviceId  = 0xFF;
 		actionItems[i].inputPort = 0xFF;
-		actionItems[i].type      = 0;
+		actionItems[i].mode      = ActionMode::normal;
+		actionItems[i].type      = ActionType::low;
 		actionItems[i].ports     = 0;
 		actionItems[i].delay     = 0;
 	}
@@ -347,12 +379,13 @@ void readConfig() {
 	}
 }
 
-void updateActionItem(uint8_t actionDeviceId, uint8_t inputPort, uint8_t type, uint16_t actionPorts) {
+void updateActionItem(uint8_t actionDeviceId, uint8_t inputPort, ActionMode mode, ActionType type, uint16_t actionPorts) {
 	// Add mapping if ports for device are defined
 	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 		if (actionItems[i].deviceId == 0xFF) {
 			actionItems[i].deviceId = actionDeviceId;
 			actionItems[i].inputPort = inputPort;
+			actionItems[i].mode = mode;
 			actionItems[i].type = type;
 			actionItems[i].ports = actionPorts;
 			lastActionItem = &actionItems[i];
@@ -363,6 +396,21 @@ void updateActionItem(uint8_t actionDeviceId, uint8_t inputPort, uint8_t type, u
 
 void updateActionDelay(uint32_t delay) {
 	lastActionItem->delay = delay;
+}
+
+void resetCommand(Command execCommand) {
+	execCommand.isWrite   = false;
+	execCommand.isDigital = false;
+	execCommand.isAnalog  = false;
+	execCommand.isOutput  = false;
+	execCommand.isBit     = false;
+	execCommand.isByte    = false;
+	execCommand.isInteger = false;
+	execCommand.isDecimal = false;
+	execCommand.port      = 0xFF;
+	execCommand.type      = ActionType::low;
+	execCommand.delay     = 0;
+	execCommand.extra     = 0;
 }
 
 // Handle one received CAN frame for us
@@ -388,17 +436,19 @@ void canProcessFrame(const CAN_message_t& rx) {
 	bool isError       = (commCtrl & (uint8_t)CommunicationCtrl::errorBit) == (uint8_t)CommunicationCtrl::errorBit;
 	
 	// Data control parameters
-	bool isRead    = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::read;
-	bool isWrite   = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::write;
-	bool isToggle  = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::toggle;
-	bool isAnalog  = (dataCtrl & (uint8_t)DataCtrl::signalBit) == (uint8_t)DataCtrl::analog;
-	bool isDigital = (dataCtrl & (uint8_t)DataCtrl::signalBit) == (uint8_t)DataCtrl::digital;
-	bool isOutput  = (dataCtrl & (uint8_t)DataCtrl::directionBit) == (uint8_t)DataCtrl::output;
-	bool isInput   = (dataCtrl & (uint8_t)DataCtrl::directionBit) == (uint8_t)DataCtrl::input;
-	bool isBit     = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::bit;
-	bool isByte    = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::byte;
-	bool isInteger = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::integer;
-	bool isDecimal = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::decimal;
+	bool isRead       = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::read;
+	bool isWrite      = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::write;
+	bool isDelay      = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::delay;
+	bool isListDelays = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::listDelays;
+	bool isExtra      = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::extra;
+	bool isAnalog     = (dataCtrl & (uint8_t)DataCtrl::signalBit) == (uint8_t)DataCtrl::analog;
+	bool isDigital    = (dataCtrl & (uint8_t)DataCtrl::signalBit) == (uint8_t)DataCtrl::digital;
+	bool isOutput     = (dataCtrl & (uint8_t)DataCtrl::directionBit) == (uint8_t)DataCtrl::output;
+	bool isInput      = (dataCtrl & (uint8_t)DataCtrl::directionBit) == (uint8_t)DataCtrl::input;
+	bool isBit        = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::bit;
+	bool isByte       = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::byte;
+	bool isInteger    = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::integer;
+	bool isDecimal    = (dataCtrl & (uint8_t)DataCtrl::dataTypeBits) == (uint8_t)DataCtrl::decimal;
 
 	// Config control parameters
 	bool isConfig        = (configCtrl & (uint8_t)ConfigCtrl::configBit) == (uint8_t)ConfigCtrl::configBit;
@@ -515,38 +565,39 @@ void canProcessFrame(const CAN_message_t& rx) {
 						if (actionItems[i].inputPort == port) {
 							actionItems[i].deviceId = 0xFF;
 							actionItems[i].inputPort = 0xFF;
-							actionItems[i].type = 0;
+							actionItems[i].mode = ActionMode::normal;
+							actionItems[i].type = ActionType::low;
 							actionItems[i].ports = 0;
 							actionItems[i].delay = 0;
 						}
 					}
 					break;
-				case ConfigOptions::actionToggle:
-					updateActionItem(actionDeviceId, port, (uint8_t)ActionTypes::toggle, actionPorts);
+				case ConfigOptions::actionLow:
+					updateActionItem(actionDeviceId, port, ActionMode::normal, ActionType::low, actionPorts);
 					break;
 				case ConfigOptions::actionHigh:
-					updateActionItem(actionDeviceId, port, (uint8_t)ActionTypes::high, actionPorts);
+					updateActionItem(actionDeviceId, port, ActionMode::normal, ActionType::high, actionPorts);
 					break;
-				case ConfigOptions::actionLow:
-					updateActionItem(actionDeviceId, port, (uint8_t)ActionTypes::low, actionPorts);
-					break;
-				case ConfigOptions::actionLongpressToggle:
-					updateActionItem(actionDeviceId, port, (uint8_t)ActionTypes::longpressToggle, actionPorts);
-					break;
-				case ConfigOptions::actionLongpressHigh:
-					updateActionItem(actionDeviceId, port, (uint8_t)ActionTypes::longpressHigh, actionPorts);
+				case ConfigOptions::actionToggle:
+					updateActionItem(actionDeviceId, port, ActionMode::normal, ActionType::toggle, actionPorts);
 					break;
 				case ConfigOptions::actionLongpressLow:
-					updateActionItem(actionDeviceId, port, (uint8_t)ActionTypes::longpressLow, actionPorts);
+					updateActionItem(actionDeviceId, port, ActionMode::longpress, ActionType::low, actionPorts);
 					break;
-				case ConfigOptions::actionDoubleclickToggle:
-					updateActionItem(actionDeviceId, port, (uint8_t)ActionTypes::doubleclickToggle, actionPorts);
+				case ConfigOptions::actionLongpressHigh:
+					updateActionItem(actionDeviceId, port, ActionMode::longpress, ActionType::high, actionPorts);
 					break;
-				case ConfigOptions::actionDoubleclickHigh:
-					updateActionItem(actionDeviceId, port, (uint8_t)ActionTypes::doubleclickHigh, actionPorts);
+				case ConfigOptions::actionLongpressToggle:
+					updateActionItem(actionDeviceId, port, ActionMode::longpress, ActionType::toggle, actionPorts);
 					break;
 				case ConfigOptions::actionDoubleclickLow:
-					updateActionItem(actionDeviceId, port, (uint8_t)ActionTypes::doubleclickLow, actionPorts);
+					updateActionItem(actionDeviceId, port, ActionMode::doubleclick, ActionType::low, actionPorts);
+					break;
+				case ConfigOptions::actionDoubleclickHigh:
+					updateActionItem(actionDeviceId, port, ActionMode::doubleclick, ActionType::high, actionPorts);
+					break;
+				case ConfigOptions::actionDoubleclickToggle:
+					updateActionItem(actionDeviceId, port, ActionMode::doubleclick, ActionType::toggle, actionPorts);
 					break;
 				case ConfigOptions::bypassInstantly:
 					inputConfig[port].bypassInstantly = data > 0;
@@ -587,15 +638,6 @@ void canProcessFrame(const CAN_message_t& rx) {
 					break;
 				case ConfigOptions::actions:
 					ConfigOptions typeToActionConf[9];
-					typeToActionConf[(uint8_t)ActionTypes::low] = ConfigOptions::actionLow;
-					typeToActionConf[(uint8_t)ActionTypes::high] = ConfigOptions::actionHigh;
-					typeToActionConf[(uint8_t)ActionTypes::toggle] = ConfigOptions::actionToggle;
-					typeToActionConf[(uint8_t)ActionTypes::longpressLow] = ConfigOptions::actionLongpressLow;
-					typeToActionConf[(uint8_t)ActionTypes::longpressHigh] = ConfigOptions::actionLongpressHigh;
-					typeToActionConf[(uint8_t)ActionTypes::longpressToggle] = ConfigOptions::actionLongpressToggle;
-					typeToActionConf[(uint8_t)ActionTypes::doubleclickLow] = ConfigOptions::actionDoubleclickLow;
-					typeToActionConf[(uint8_t)ActionTypes::doubleclickHigh] = ConfigOptions::actionDoubleclickHigh;
-					typeToActionConf[(uint8_t)ActionTypes::doubleclickToggle] = ConfigOptions::actionDoubleclickToggle;
 					// Send configurations for output ports related to all devices on grid
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionItems[i].inputPort == port) {
@@ -603,7 +645,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 							sendAck(from,
 								deviceId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
-								(uint8_t)ConfigCtrl::configBit | (uint8_t)typeToActionConf[actionItems[i].type],
+								(uint8_t)ConfigCtrl::configBit | (uint8_t)actionToConfigType[(uint8_t)actionItems[i].mode][(uint8_t)actionItems[i].type],
 								port,
 								confData);
 							
@@ -646,63 +688,81 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Command - data operation
 	if (isCommand) {
-		if (isWrite) {
-			// Only allow writing to output ports
-			if (isInput) {
-				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
-				return;
-			}
-
-			// Set output value
-			if (isBit) {
-				// Write new value to output port
-				setDigitalOutput(port, data & 0x01);
-			} else if (isInteger) {
-				// Set delay
-				setDelay(deviceId, port, ((int32_t) data) > 0, data);
-			} else {
-				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
-				return;
-			}
-
-			// Send back updated value
-			sendAck(from, deviceId, commCtrl, dataCtrl, port, outputDigitals[port].value);
-		} else if (isToggle) {
-			// Only allow writing to output ports
-			if (isInput) {
-				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
-				return;
-			}
-
-			// Toggle output value
-			if (isBit) {
-				// Toggle value of output port
-				setDigitalOutput(port, outputDigitals[port].value == HIGH ? LOW : HIGH);
-			} else if (isInteger) {
-				// Set delay
-				setDelay(deviceId, port, outputDigitals[port].value  == HIGH ? LOW : HIGH, data);
-			} else {
-				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
-				return;
-			}
-
-			// Send back updated value
-			sendAck(from, deviceId, commCtrl, dataCtrl, port, outputDigitals[port].value);
-		} else if (isRead) {
+		if (isRead) {
 			// Send back digital input/output value
-			if (isBit) {
+			if (isBit || isByte || isInteger) {
 				sendAck(from, deviceId, commCtrl, dataCtrl, port, isInput ? inputDigitals[port].value : outputDigitals[port].value);
-			} else if (isByte) {
-				// TODO - TYPE_BYTE
-				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
-			} else if (isInteger) {
-				// TODO - TYPE_INT
-				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
-			} else if (isDecimal) {
+			} else {
 				// TODO - TYPE_FLOAT
 				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
 			}
+			return;
 		}
+
+		if (isListDelays) {
+			// TODO
+			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			return;
+		}
+		
+		// Only allow writing to output ports
+		if (isInput) {
+			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			return;
+		}
+
+		// Set command
+		if (isWrite){
+			execCommand.isWrite = isWrite;
+			execCommand.isDigital = isDigital;
+			execCommand.isAnalog = isAnalog;
+			execCommand.isOutput = isOutput;
+			execCommand.isBit = isBit;
+			execCommand.isByte = isByte;
+			execCommand.isInteger = isInteger;
+			execCommand.isDecimal = isDecimal;
+			execCommand.port = port;
+			execCommand.type = (ActionType)data;
+		} else if (isDelay) {
+			// It has to match on port, digital/analog, input/output otherwise reset
+			if (port != execCommand.port || isDigital != execCommand.isDigital || isOutput != execCommand.isOutput) {
+				resetCommand(execCommand);
+				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+				return;
+			}
+			execCommand.delay = data;
+		} else if (isExtra) {
+			// It has to match on port, digital/analog, input/output otherwise reset
+			if (port != execCommand.port || isDigital != execCommand.isDigital || isOutput != execCommand.isOutput) {
+				resetCommand(execCommand);
+				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+				return;
+			}
+			// Future use
+			execCommand.extra = data;
+		}
+		
+		// Execute command when no other data is expected
+		if (!isWait && execCommand.isWrite) {
+			if (execCommand.delay > 0) {
+				setDelay(deviceId, execCommand.port, execCommand.type, execCommand.delay);
+			} else {
+				// Set output value, for now this covers all dataTypes except decimals
+				if (execCommand.isBit || execCommand.isByte || execCommand.isInteger) {
+					// Write new value to output port
+					setDigitalOutput(execCommand.port, (ActionType)data);
+				} else {
+					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
+					return;
+				}
+			}
+			// Send back current outputDigital value
+			sendAck(from, deviceId, commCtrl, dataCtrl, port, outputDigitals[port].value);
+
+			// Reset execCommand properties
+			resetCommand(execCommand);
+		}
+		return;
 	}
 
 	// No action could be taken based on the frame definition
@@ -712,6 +772,16 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 // Main function to setup stm32
 void setup() {
+	// Map of actions to config types
+	actionToConfigType[(uint8_t)ActionMode::normal][(uint8_t)ActionType::low] = ConfigOptions::actionLow;
+	actionToConfigType[(uint8_t)ActionMode::normal][(uint8_t)ActionType::high] = ConfigOptions::actionHigh;
+	actionToConfigType[(uint8_t)ActionMode::normal][(uint8_t)ActionType::toggle] = ConfigOptions::actionToggle;
+	actionToConfigType[(uint8_t)ActionMode::longpress][(uint8_t)ActionType::low] = ConfigOptions::actionLongpressLow;
+	actionToConfigType[(uint8_t)ActionMode::longpress][(uint8_t)ActionType::high] = ConfigOptions::actionLongpressHigh;
+	actionToConfigType[(uint8_t)ActionMode::longpress][(uint8_t)ActionType::toggle] = ConfigOptions::actionLongpressToggle;
+	actionToConfigType[(uint8_t)ActionMode::doubleclick][(uint8_t)ActionType::low] = ConfigOptions::actionDoubleclickLow;
+	actionToConfigType[(uint8_t)ActionMode::doubleclick][(uint8_t)ActionType::high] = ConfigOptions::actionDoubleclickHigh;
+	actionToConfigType[(uint8_t)ActionMode::doubleclick][(uint8_t)ActionType::toggle] = ConfigOptions::actionDoubleclickToggle;
 
 	// Read DIP switches to get device id
 	deviceId = computeDeviceAddress();
@@ -750,7 +820,7 @@ void setup() {
 		delay.active   = false;
 		delay.deviceId = 0xFF;
 		delay.port     = 0;
-		delay.type     = 0;
+		delay.type     = ActionType::low;
 		delay.time     = 0;
 		delays[delayIdx] = delay;
 	}
@@ -850,37 +920,18 @@ void loop() {
 				if (inputConfig[inputPort].isSwitch || (inputConfig[inputPort].isButtonRisingEdge && inputDigitals[inputPort].value == HIGH) || (inputConfig[inputPort].isButtonFallingEdge && inputDigitals[inputPort].value == LOW)) {
 					// Loop actions
 					for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
-						if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort) {
+						if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort && actionItems[gridDevIdx].mode == ActionMode::normal) {
 							for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
 								if (actionItems[gridDevIdx].ports & (1 << outputPort)) {
 									if (actionItems[gridDevIdx].delay > 0) {	
 										// Change value of local output port
-										if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::high) {
-											setDelay(actionItems[gridDevIdx].deviceId, outputPort, (uint8_t)ActionTypes::high, actionItems[gridDevIdx].delay);
-										} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::low) {
-											setDelay(actionItems[gridDevIdx].deviceId, outputPort, (uint8_t)ActionTypes::low, actionItems[gridDevIdx].delay);
-										} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::toggle) {
-											setDelay(actionItems[gridDevIdx].deviceId, outputPort, (uint8_t)ActionTypes::toggle, actionItems[gridDevIdx].delay);
-										}
+										setDelay(actionItems[gridDevIdx].deviceId, outputPort, actionItems[gridDevIdx].type, actionItems[gridDevIdx].delay);
 									} else if (actionItems[gridDevIdx].deviceId == deviceId) {
 										// Change value of local output port
-										if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::high) {
-											setDigitalOutput(outputPort, HIGH);
-										} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::low) {
-											setDigitalOutput(outputPort, LOW);
-										} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::toggle) {
-											uint8_t desiredState = outputDigitals[outputPort].value == HIGH ? LOW : HIGH;
-											setDigitalOutput(outputPort, desiredState);
-										}
+										setDigitalOutput(outputPort, (ActionType)actionItems[gridDevIdx].type);
 									} else {
 										// Send command to change remote output port
-										if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::high) {
-											canWriteFrame(actionItems[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, HIGH);
-										} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::low) {
-											canWriteFrame(actionItems[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, LOW);
-										} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::toggle) {
-											canWriteFrame(actionItems[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::toggle, outputPort, 0);
-										}
+										canWriteFrame(actionItems[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, (uint8_t)actionItems[gridDevIdx].type);
 									}
 								}
 							}
@@ -906,36 +957,17 @@ void loop() {
 
 				// Action longpress events
 				for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
-					if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort) {
+					if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort && actionItems[gridDevIdx].mode == ActionMode::longpress) {
 						for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
 							if (actionItems[gridDevIdx].ports & (1 << outputPort)) {
 								if (actionItems[gridDevIdx].delay > 0) {	
 									// Change value of local output port
-									if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::longpressHigh) {
-										setDelay(actionItems[gridDevIdx].deviceId, outputPort, (uint8_t)ActionTypes::high, actionItems[gridDevIdx].delay);
-									} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::longpressLow) {
-										setDelay(actionItems[gridDevIdx].deviceId, outputPort, (uint8_t)ActionTypes::low, actionItems[gridDevIdx].delay);
-									} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::longpressToggle) {
-										setDelay(actionItems[gridDevIdx].deviceId, outputPort, (uint8_t)ActionTypes::toggle, actionItems[gridDevIdx].delay);
-									}
+									setDelay(actionItems[gridDevIdx].deviceId, outputPort, actionItems[gridDevIdx].type, actionItems[gridDevIdx].delay);
 								} else if (actionItems[gridDevIdx].deviceId == deviceId) {
 									// Change value of local output port
-									if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::longpressHigh) {
-										setDigitalOutput(outputPort, HIGH);
-									} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::longpressLow) {
-										setDigitalOutput(outputPort, LOW);
-									} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::longpressToggle) {
-										setDigitalOutput(outputPort, outputDigitals[outputPort].value == HIGH ? LOW : HIGH);
-									}
+									setDigitalOutput(outputPort, actionItems[gridDevIdx].type);
 								} else {
-									// Send command to change output port on deviceId
-									if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::longpressHigh) {
-										canWriteFrame(actionItems[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, HIGH);
-									} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::longpressLow) {
-										canWriteFrame(actionItems[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, 0);
-									} else if (actionItems[gridDevIdx].type == (uint8_t)ActionTypes::longpressToggle) {
-										canWriteFrame(actionItems[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::toggle, outputPort, 0);
-									}
+									canWriteFrame(actionItems[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, (uint8_t)actionItems[gridDevIdx].type);
 								}
 							}
 						}
@@ -949,18 +981,9 @@ void loop() {
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (delays[delayIdx].active == true && delays[delayIdx].time < micros()) {
 			if (delays[delayIdx].deviceId == deviceId) {
-				if (delays[delayIdx].type == (uint8_t)ActionTypes::toggle) {
-					uint8_t desiredState = outputDigitals[delays[delayIdx].port].value == HIGH ? LOW : HIGH;
-					setDigitalOutput(delays[delayIdx].port, desiredState);
-				} else {
-					setDigitalOutput(delays[delayIdx].port, delays[delayIdx].type);
-				}
+				setDigitalOutput(delays[delayIdx].port, delays[delayIdx].type);
 			} else {
-				if (delays[delayIdx].type == (uint8_t)ActionTypes::toggle) {
-					canWriteFrame(delays[delayIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::toggle, delays[delayIdx].port, 0);
-				} else {
-					canWriteFrame(delays[delayIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, delays[delayIdx].port, delays[delayIdx].type);
-				}
+				canWriteFrame(delays[delayIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
 			}
 			removeDelay(delays[delayIdx].deviceId, delays[delayIdx].port);
 		}
