@@ -789,10 +789,13 @@ void setup() {
 		// external pull-ups/downs as designed
 		pinMode(inputDigitalPins[inputPort], INPUT);
 		
+		// allow signal to settle
+		delayMicroseconds(100);
+
 		// Create object
 		InputDigital input{};
 		input.pin               = inputDigitalPins[inputPort];
-		input.value             = digitalRead(inputDigitalPins[inputPort]);
+		input.value             = digitalRead(inputDigitalPins[inputPort]) == HIGH ? 0 : 1;
 		input.debounce          = 0;
 		input.pressedTime       = 0;
 		input.longpressRecorded = 0;
