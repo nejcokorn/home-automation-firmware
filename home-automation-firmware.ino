@@ -414,8 +414,7 @@ void resetCommand(Command* execCommand) {
 
 // Handle one received CAN frame for us
 void canProcessFrame(const CAN_message_t& rx) {
-	// Only process frames where CAN ID matches us or broadcast
-	if (rx.id != thisDeviceId && rx.id != CAN_BCAST_ADDRES) return;
+	// Only process frames where CAN messages where length is 8 bytes
 	if (rx.len != 8) return;
 
 	// Unpack payload
@@ -496,18 +495,18 @@ void canProcessFrame(const CAN_message_t& rx) {
 		return;
 	}	
 
-	// Only reply to the broadcast address on discovery or ping frames
-	if (rx.id == CAN_BCAST_ADDRES) {
-		// Do not sent out error in case future devices support other functionality
-		return;
-	}
-
-	// Only reply to the frames indended for this device
+	// Only reply to the frames intended for this device
 	if (rx.id != thisDeviceId) {
-		// Do not sent out error
+		// Remove delays for other devices
+		if (!isConfig && (
+				(isCommand && isSet && isOutput && isDigital && !isAcknowledge && !isError)
+				|| (!isCommand && isGet && isOutput && isDigital)
+			)) {
+			removeDelay(rx.id, port);
+		}
+		
+		// From here onward - Only reply to the frames intended for this device
 		return;
-	} else {
-		// TODO clear delays for other devices
 	}
 
 	// Config
