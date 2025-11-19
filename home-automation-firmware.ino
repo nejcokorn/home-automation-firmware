@@ -109,13 +109,12 @@ enum class ActionMode: uint8_t {
 // CAN setup
 STM32_CAN Can1(CAN_RX, CAN_TX, RX_SIZE_512, TX_SIZE_512);
 
-#define CAN_BASE_ADDRESS 0x000
-#define CAN_BCAST_ADDRES 0x7FF // broadcast frame receiver
+#define CAN_BCAST_ADDRES 0xFF // broadcast frame receiver
 
 uint32_t firmwareVersion;
 
 // Logical device identity
-uint8_t deviceId = 0;
+uint8_t thisDeviceId = 0;
 
 // Hardware pin maps (from your original sketch)
 const int deviceAddressPins[] = { DEV_A1, DEV_A2, DEV_A3, DEV_A4, DEV_A5 };
@@ -226,7 +225,7 @@ static inline uint8_t computeDeviceAddress() {
 // Send CAN frame
 void canWriteFrame(uint16_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uint8_t port, uint32_t data) {
 	CAN_message_t tx{};
-	tx.id  = (uint16_t)(CAN_BASE_ADDRESS + (to & 0xFF));
+	tx.id  = to;
 	tx.len = 8;
 
 	tx.buf[0] = from;             // B1 From
@@ -277,7 +276,7 @@ void setDigitalOutput(uint8_t port, ActionType actionType) {
 		if (outputDigitals[port].value != value){
 			uint8_t commCtrl = 0x00;
 			uint8_t dataCtrl = (uint8_t)DataCtrl::bit;
-			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, port, value);
+			canWriteFrame(0xFF, thisDeviceId, commCtrl, dataCtrl, port, value);
 		}
 
 		// Do the actuall change
@@ -285,15 +284,15 @@ void setDigitalOutput(uint8_t port, ActionType actionType) {
 		outputDigitals[port].value = value;
 
 		// Remove all related delays
-		removeDelay(deviceId, port);
+		removeDelay(thisDeviceId, port);
 	}
 }
 
-void setDelay(uint8_t delayDeviceId, uint8_t port, ActionType type, uint32_t delay) {
+void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (!delays[delayIdx].active) {
 			delays[delayIdx].active = true;
-			delays[delayIdx].deviceId = delayDeviceId;
+			delays[delayIdx].deviceId = deviceId;
 			delays[delayIdx].port = port;
 			delays[delayIdx].type = type;
 			delays[delayIdx].time = micros() + delay * 1000;
@@ -302,9 +301,9 @@ void setDelay(uint8_t delayDeviceId, uint8_t port, ActionType type, uint32_t del
 	}
 }
 
-void removeDelay(uint8_t delayDeviceId, uint8_t port) {
+void removeDelay(uint8_t deviceId, uint8_t port) {
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
-		if (delays[delayIdx].deviceId == delayDeviceId && delays[delayIdx].port == port) {
+		if (delays[delayIdx].deviceId == deviceId && delays[delayIdx].port == port) {
 			delays[delayIdx].active = false;
 			delays[delayIdx].deviceId = 0xFF;
 			delays[delayIdx].port = 0;
@@ -379,11 +378,11 @@ void readConfig() {
 	}
 }
 
-void updateActionItem(uint8_t actionDeviceId, uint8_t inputPort, ActionMode mode, ActionType type, uint16_t actionPorts) {
+void updateActionItem(uint8_t deviceId, uint8_t inputPort, ActionMode mode, ActionType type, uint16_t actionPorts) {
 	// Add mapping if ports for device are defined
 	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 		if (actionItems[i].deviceId == 0xFF) {
-			actionItems[i].deviceId = actionDeviceId;
+			actionItems[i].deviceId = deviceId;
 			actionItems[i].inputPort = inputPort;
 			actionItems[i].mode = mode;
 			actionItems[i].type = type;
@@ -416,7 +415,7 @@ void resetCommand(Command execCommand) {
 // Handle one received CAN frame for us
 void canProcessFrame(const CAN_message_t& rx) {
 	// Only process frames where CAN ID matches us or broadcast
-	if (rx.id != (uint16_t)(CAN_BASE_ADDRESS + deviceId) && rx.id != CAN_BCAST_ADDRES) return;
+	if (rx.id != thisDeviceId && rx.id != CAN_BCAST_ADDRES) return;
 	if (rx.len != 8) return;
 
 	// Unpack payload
@@ -467,12 +466,12 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		}
 		if (isWrite || isPing || isError || isConfig) {
-			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 
 		// Return device firmware when asked to identify
-		sendAck(from, deviceId, commCtrl, (uint8_t)DataCtrl::integer, 0, FIRMWARE_VERSION);
+		sendAck(from, thisDeviceId, commCtrl, (uint8_t)DataCtrl::integer, 0, FIRMWARE_VERSION);
 		return;
 	}
 
@@ -482,18 +481,18 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Do not answer. Acknowledge sent from another device
 			return;
 		}
-		if (!(rx.id == (uint16_t)(CAN_BASE_ADDRESS + deviceId) || rx.id == CAN_BCAST_ADDRES)) {
+		if (!(rx.id == thisDeviceId || rx.id == CAN_BCAST_ADDRES)) {
 			// Frame has to be sent to broadcast address or device address
 			return;
 		}
 
 		if (isWrite || isError || isConfig) {
-			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 
 		// Pong
-		sendAck(from, deviceId, commCtrl, dataCtrl, 0, 0);
+		sendAck(from, thisDeviceId, commCtrl, dataCtrl, 0, 0);
 		return;
 	}	
 
@@ -504,7 +503,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 	}
 
 	// Only reply to the frames indended for this device
-	if (rx.id != (uint16_t)(CAN_BASE_ADDRESS + deviceId)) {
+	if (rx.id != thisDeviceId) {
 		// Do not sent out error
 		return;
 	} else {
@@ -515,7 +514,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 	if (isConfig) {
 		// Validate communication byte
 		if (!isCommand || isError) {
-			sendError(from, deviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			sendError(from, thisDeviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 
@@ -523,13 +522,13 @@ void canProcessFrame(const CAN_message_t& rx) {
 		if (isConfigWrite == true && static_cast<ConfigOptions>(configOption) == ConfigOptions::writeEEPROM) {
 			// Store configuration into EEPROM
 			saveConfig();
-			sendAck(from, deviceId, commCtrl, configCtrl, port, data);
+			sendAck(from, thisDeviceId, commCtrl, configCtrl, port, data);
 			return;
 		}
 
 		// Validate port range
 		if (port > 15) {
-			sendError(from, deviceId, commCtrl, configCtrl, port, ERR_INVALID_PORT);
+			sendError(from, thisDeviceId, commCtrl, configCtrl, port, ERR_INVALID_PORT);
 			return;
 		}
 
@@ -609,11 +608,11 @@ void canProcessFrame(const CAN_message_t& rx) {
 					inputConfig[port].bypassOnDisconnect = data;
 					break;
 				default:
-					sendError(from, deviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+					sendError(from, thisDeviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 					return;
 					break;	
 			}
-			sendAck(from, deviceId, commCtrl, configCtrl, port, data);
+			sendAck(from, thisDeviceId, commCtrl, configCtrl, port, data);
 			return;
 		} else if (isConfigRead) {
 			uint32_t confData = 0;
@@ -643,7 +642,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 						if (actionItems[i].inputPort == port) {
 							confData = actionItems[i].deviceId << 16 | actionItems[i].ports;
 							sendAck(from,
-								deviceId,
+								thisDeviceId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)actionToConfigType[(uint8_t)actionItems[i].mode][(uint8_t)actionItems[i].type],
 								port,
@@ -652,7 +651,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 							if (actionItems[i].delay != 0) {
 								// Send information about action delay
 								sendAck(from,
-									deviceId,
+									thisDeviceId,
 									commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 									(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::delay,
 									port,
@@ -661,7 +660,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 						}
 					}
 					// Send last package as empty
-					sendAck(from, deviceId, commCtrl, configCtrl, port, 0);
+					sendAck(from, thisDeviceId, commCtrl, configCtrl, port, 0);
 					return;
 				case ConfigOptions::bypassInstantly:
 					confData = inputConfig[port].bypassInstantly ? 1 : 0;
@@ -673,16 +672,16 @@ void canProcessFrame(const CAN_message_t& rx) {
 					confData = inputConfig[port].bypassOnDisconnect;
 					break;
 				default:
-					sendError(from, deviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+					sendError(from, thisDeviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 					return;
 					break;
 			}
-			sendAck(from, deviceId, commCtrl, configCtrl, port, confData);
+			sendAck(from, thisDeviceId, commCtrl, configCtrl, port, confData);
 			return;
 		}
 
 		// Operation must be Read or Write
-		sendError(from, deviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+		sendError(from, thisDeviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 		return;
 	}
 
@@ -691,23 +690,23 @@ void canProcessFrame(const CAN_message_t& rx) {
 		if (isRead) {
 			// Send back digital input/output value
 			if (isBit || isByte || isInteger) {
-				sendAck(from, deviceId, commCtrl, dataCtrl, port, isInput ? inputDigitals[port].value : outputDigitals[port].value);
+				sendAck(from, thisDeviceId, commCtrl, dataCtrl, port, isInput ? inputDigitals[port].value : outputDigitals[port].value);
 			} else {
 				// TODO - TYPE_FLOAT
-				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
+				sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
 			}
 			return;
 		}
 
 		if (isListDelays) {
 			// TODO
-			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 		
 		// Only allow writing to output ports
 		if (isInput) {
-			sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 
@@ -727,7 +726,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// It has to match on port, digital/analog, input/output otherwise reset
 			if (port != execCommand.port || isDigital != execCommand.isDigital || isOutput != execCommand.isOutput) {
 				resetCommand(execCommand);
-				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+				sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 				return;
 			}
 			execCommand.delay = data;
@@ -735,7 +734,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// It has to match on port, digital/analog, input/output otherwise reset
 			if (port != execCommand.port || isDigital != execCommand.isDigital || isOutput != execCommand.isOutput) {
 				resetCommand(execCommand);
-				sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+				sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 				return;
 			}
 			// Future use
@@ -745,19 +744,19 @@ void canProcessFrame(const CAN_message_t& rx) {
 		// Execute command when no other data is expected
 		if (!isWait && execCommand.isWrite) {
 			if (execCommand.delay > 0) {
-				setDelay(deviceId, execCommand.port, execCommand.type, execCommand.delay);
+				setDelay(thisDeviceId, execCommand.port, execCommand.type, execCommand.delay);
 			} else {
 				// Set output value, for now this covers all dataTypes except decimals
 				if (execCommand.isBit || execCommand.isByte || execCommand.isInteger) {
 					// Write new value to output port
 					setDigitalOutput(execCommand.port, (ActionType)data);
 				} else {
-					sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
+					sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
 					return;
 				}
 			}
 			// Send back current outputDigital value
-			sendAck(from, deviceId, commCtrl, dataCtrl, port, outputDigitals[port].value);
+			sendAck(from, thisDeviceId, commCtrl, dataCtrl, port, outputDigitals[port].value);
 
 			// Reset execCommand properties
 			resetCommand(execCommand);
@@ -766,7 +765,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 	}
 
 	// No action could be taken based on the frame definition
-	sendError(from, deviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+	sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 	return;
 }
 
@@ -784,7 +783,7 @@ void setup() {
 	actionToConfigType[(uint8_t)ActionMode::doubleclick][(uint8_t)ActionType::toggle] = ConfigOptions::actionDoubleclickToggle;
 
 	// Read DIP switches to get device id
-	deviceId = computeDeviceAddress();
+	thisDeviceId = computeDeviceAddress();
 
 	// Setup digital inputs
 	for (int inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
@@ -910,7 +909,7 @@ void loop() {
 			uint8_t commCtrl = (uint8_t)CommunicationCtrl::empty;
 			uint8_t dataCtrl = (uint8_t)DataCtrl::input | (uint8_t)DataCtrl::bit;
 			// Push to a broadcast address
-			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].value);
+			canWriteFrame(0xFF, thisDeviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].value);
 
 			// Calculate bypass
 			if (inputConfig[inputPort].bypassInstantly == true
@@ -926,12 +925,12 @@ void loop() {
 									if (actionItems[gridDevIdx].delay > 0) {	
 										// Change value of local output port
 										setDelay(actionItems[gridDevIdx].deviceId, outputPort, actionItems[gridDevIdx].type, actionItems[gridDevIdx].delay);
-									} else if (actionItems[gridDevIdx].deviceId == deviceId) {
+									} else if (actionItems[gridDevIdx].deviceId == thisDeviceId) {
 										// Change value of local output port
 										setDigitalOutput(outputPort, (ActionType)actionItems[gridDevIdx].type);
 									} else {
 										// Send command to change remote output port
-										canWriteFrame(actionItems[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, (uint8_t)actionItems[gridDevIdx].type);
+										canWriteFrame(actionItems[gridDevIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, (uint8_t)actionItems[gridDevIdx].type);
 									}
 								}
 							}
@@ -947,7 +946,7 @@ void loop() {
 			// Push event on input longpress
 			uint8_t commCtrl = (uint8_t)CommunicationCtrl::empty;
 			uint8_t dataCtrl = (uint8_t)DataCtrl::input | (uint8_t)DataCtrl::bit;
-			canWriteFrame(0xFF, deviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].pressedTime / 1000);
+			canWriteFrame(0xFF, thisDeviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].pressedTime / 1000);
 
 
 			// Calculate bypass
@@ -963,11 +962,11 @@ void loop() {
 								if (actionItems[gridDevIdx].delay > 0) {	
 									// Change value of local output port
 									setDelay(actionItems[gridDevIdx].deviceId, outputPort, actionItems[gridDevIdx].type, actionItems[gridDevIdx].delay);
-								} else if (actionItems[gridDevIdx].deviceId == deviceId) {
+								} else if (actionItems[gridDevIdx].deviceId == thisDeviceId) {
 									// Change value of local output port
 									setDigitalOutput(outputPort, actionItems[gridDevIdx].type);
 								} else {
-									canWriteFrame(actionItems[gridDevIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, (uint8_t)actionItems[gridDevIdx].type);
+									canWriteFrame(actionItems[gridDevIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, (uint8_t)actionItems[gridDevIdx].type);
 								}
 							}
 						}
@@ -980,10 +979,10 @@ void loop() {
 	// Watch for delay timers
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (delays[delayIdx].active == true && delays[delayIdx].time < micros()) {
-			if (delays[delayIdx].deviceId == deviceId) {
+			if (delays[delayIdx].deviceId == thisDeviceId) {
 				setDigitalOutput(delays[delayIdx].port, delays[delayIdx].type);
 			} else {
-				canWriteFrame(delays[delayIdx].deviceId, deviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
+				canWriteFrame(delays[delayIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
 			}
 			removeDelay(delays[delayIdx].deviceId, delays[delayIdx].port);
 		}
