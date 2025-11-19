@@ -687,7 +687,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Command - data operation
 	if (isCommand) {
-		if (isSet) {
+		if (isGet) {
 			// Send back digital input/output value
 			if (isBit || isByte || isInteger) {
 				sendAck(from, thisDeviceId, commCtrl, dataCtrl, port, isInput ? inputDigitals[port].value : outputDigitals[port].value);
@@ -756,7 +756,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 				}
 			}
 			// Send back current outputDigital value
-			sendAck(from, thisDeviceId, commCtrl, dataCtrl, port, outputDigitals[port].value);
+			sendAck(from, thisDeviceId, commCtrl, (uint8_t)DataCtrl::set, port, outputDigitals[port].value);
 
 			// Reset execCommand properties
 			resetCommand(&execCommand);
