@@ -397,19 +397,19 @@ void updateActionDelay(uint32_t delay) {
 	lastActionItem->delay = delay;
 }
 
-void resetCommand(Command execCommand) {
-	execCommand.isWrite   = false;
-	execCommand.isDigital = false;
-	execCommand.isAnalog  = false;
-	execCommand.isOutput  = false;
-	execCommand.isBit     = false;
-	execCommand.isByte    = false;
-	execCommand.isInteger = false;
-	execCommand.isDecimal = false;
-	execCommand.port      = 0xFF;
-	execCommand.type      = ActionType::low;
-	execCommand.delay     = 0;
-	execCommand.extra     = 0;
+void resetCommand(Command* execCommand) {
+	execCommand->isWrite   = false;
+	execCommand->isDigital = false;
+	execCommand->isAnalog  = false;
+	execCommand->isOutput  = false;
+	execCommand->isBit     = false;
+	execCommand->isByte    = false;
+	execCommand->isInteger = false;
+	execCommand->isDecimal = false;
+	execCommand->port      = 0xFF;
+	execCommand->type      = ActionType::low;
+	execCommand->delay     = 0;
+	execCommand->extra     = 0;
 }
 
 // Handle one received CAN frame for us
@@ -725,7 +725,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		} else if (isDelay) {
 			// It has to match on port, digital/analog, input/output otherwise reset
 			if (port != execCommand.port || isDigital != execCommand.isDigital || isOutput != execCommand.isOutput) {
-				resetCommand(execCommand);
+				resetCommand(&execCommand);
 				sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 				return;
 			}
@@ -733,7 +733,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		} else if (isExtra) {
 			// It has to match on port, digital/analog, input/output otherwise reset
 			if (port != execCommand.port || isDigital != execCommand.isDigital || isOutput != execCommand.isOutput) {
-				resetCommand(execCommand);
+				resetCommand(&execCommand);
 				sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 				return;
 			}
@@ -759,7 +759,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			sendAck(from, thisDeviceId, commCtrl, dataCtrl, port, outputDigitals[port].value);
 
 			// Reset execCommand properties
-			resetCommand(execCommand);
+			resetCommand(&execCommand);
 		}
 		return;
 	}
