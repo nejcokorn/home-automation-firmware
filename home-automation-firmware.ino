@@ -25,8 +25,8 @@ enum class DataCtrl: uint8_t {
 	directionBit  = 0x04,
 	dataTypeBits  = 0x03,
 	// Specific Types
-	read          = 0x00,
-	write         = 0x10,
+	get           = 0x00,
+	set           = 0x10,
 	extra         = 0x20,
 	delay         = 0x30,
 	listDelays    = 0x40,
@@ -47,8 +47,8 @@ enum class ConfigCtrl: uint8_t {
 	operationBit = 0x40,
 	optionBits   = 0x3F,
 	// Specific Types
-	write        = 0x40,
-	read         = 0x00,
+	get          = 0x00,
+	set          = 0x40,
 };
 
 // Config options
@@ -159,8 +159,8 @@ struct ActionItem {
 struct Command {
 	bool isInput;
 	bool isOutput;
-	bool isRead;
-	bool isWrite;
+	bool isGet;
+	bool isSet;
 	bool isAnalog;
 	bool isDigital;
 	bool isBit;
@@ -365,13 +365,13 @@ void readConfig() {
 	EEPROM.get(EEPROMPointer, firmwareVersion);
 	EEPROMPointer += sizeof(firmwareVersion);
 
-	// Read input configuration from EEPROM
+	// Get input configuration from EEPROM
 	for (uint8_t inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
 		EEPROM.get(EEPROMPointer, inputConfig[inputPort]);
 		EEPROMPointer += sizeof(inputConfig[inputPort]);
 	}
 
-	// Read actions
+	// Get actions from EEPROM
 	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
 		EEPROM.get(EEPROMPointer, actionItems[i]);
 		EEPROMPointer += sizeof(actionItems[i]);
@@ -398,7 +398,7 @@ void updateActionDelay(uint32_t delay) {
 }
 
 void resetCommand(Command* execCommand) {
-	execCommand->isWrite   = false;
+	execCommand->isSet     = false;
 	execCommand->isDigital = false;
 	execCommand->isAnalog  = false;
 	execCommand->isOutput  = false;
@@ -435,8 +435,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 	bool isError       = (commCtrl & (uint8_t)CommunicationCtrl::errorBit) == (uint8_t)CommunicationCtrl::errorBit;
 	
 	// Data control parameters
-	bool isRead       = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::read;
-	bool isWrite      = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::write;
+	bool isGet        = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::get;
+	bool isSet        = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::set;
 	bool isDelay      = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::delay;
 	bool isListDelays = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::listDelays;
 	bool isExtra      = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::extra;
@@ -451,8 +451,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Config control parameters
 	bool isConfig        = (configCtrl & (uint8_t)ConfigCtrl::configBit) == (uint8_t)ConfigCtrl::configBit;
-	bool isConfigRead    = (configCtrl & (uint8_t)ConfigCtrl::operationBit) == (uint8_t)ConfigCtrl::read;
-	bool isConfigWrite   = (configCtrl & (uint8_t)ConfigCtrl::operationBit) == (uint8_t)ConfigCtrl::write;
+	bool isConfigGet     = (configCtrl & (uint8_t)ConfigCtrl::operationBit) == (uint8_t)ConfigCtrl::get;
+	bool isConfigSet     = (configCtrl & (uint8_t)ConfigCtrl::operationBit) == (uint8_t)ConfigCtrl::set;
 	uint8_t configOption = (configCtrl & (uint8_t)ConfigCtrl::optionBits);
 
 	// Discovery
@@ -465,7 +465,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Frame has to be sent to broadcast address
 			return;
 		}
-		if (isWrite || isPing || isError || isConfig) {
+		if (isSet || isPing || isError || isConfig) {
 			sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
@@ -486,7 +486,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		}
 
-		if (isWrite || isError || isConfig) {
+		if (isSet || isError || isConfig) {
 			sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
@@ -519,7 +519,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		// Write current configuration to EEPROM
-		if (isConfigWrite == true && static_cast<ConfigOptions>(configOption) == ConfigOptions::writeEEPROM) {
+		if (isConfigSet == true && static_cast<ConfigOptions>(configOption) == ConfigOptions::writeEEPROM) {
 			// Store configuration into EEPROM
 			saveConfig();
 			sendAck(from, thisDeviceId, commCtrl, configCtrl, port, data);
@@ -532,7 +532,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		}
 
-		if (isConfigWrite) {
+		if (isConfigSet) {
 			uint8_t actionDeviceId = data >> 16;
 			uint16_t actionPorts = data & 0xFFF;
 
@@ -614,7 +614,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			}
 			sendAck(from, thisDeviceId, commCtrl, configCtrl, port, data);
 			return;
-		} else if (isConfigRead) {
+		} else if (isConfigGet) {
 			uint32_t confData = 0;
 			switch (static_cast<ConfigOptions>(configOption)) {
 				case ConfigOptions::buttonRisingEdge:
@@ -680,14 +680,14 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		}
 
-		// Operation must be Read or Write
+		// Operation must be Get or Set
 		sendError(from, thisDeviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 		return;
 	}
 
 	// Command - data operation
 	if (isCommand) {
-		if (isRead) {
+		if (isSet) {
 			// Send back digital input/output value
 			if (isBit || isByte || isInteger) {
 				sendAck(from, thisDeviceId, commCtrl, dataCtrl, port, isInput ? inputDigitals[port].value : outputDigitals[port].value);
@@ -711,8 +711,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		// Set command
-		if (isWrite){
-			execCommand.isWrite = isWrite;
+		if (isSet){
+			execCommand.isSet = isSet;
 			execCommand.isDigital = isDigital;
 			execCommand.isAnalog = isAnalog;
 			execCommand.isOutput = isOutput;
@@ -742,7 +742,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 		
 		// Execute command when no other data is expected
-		if (!isWait && execCommand.isWrite) {
+		if (!isWait && execCommand.isSet) {
 			if (execCommand.delay > 0) {
 				setDelay(thisDeviceId, execCommand.port, execCommand.type, execCommand.delay);
 			} else {
@@ -782,7 +782,7 @@ void setup() {
 	actionToConfigType[(uint8_t)ActionMode::doubleclick][(uint8_t)ActionType::high] = ConfigOptions::actionDoubleclickHigh;
 	actionToConfigType[(uint8_t)ActionMode::doubleclick][(uint8_t)ActionType::toggle] = ConfigOptions::actionDoubleclickToggle;
 
-	// Read DIP switches to get device id
+	// Compute DIP switches to get device id
 	thisDeviceId = computeDeviceAddress();
 
 	// Setup digital inputs
@@ -930,7 +930,7 @@ void loop() {
 										setDigitalOutput(outputPort, (ActionType)actionItems[gridDevIdx].type);
 									} else {
 										// Send command to change remote output port
-										canWriteFrame(actionItems[gridDevIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, (uint8_t)actionItems[gridDevIdx].type);
+										canWriteFrame(actionItems[gridDevIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::set, outputPort, (uint8_t)actionItems[gridDevIdx].type);
 									}
 								}
 							}
@@ -966,7 +966,7 @@ void loop() {
 									// Change value of local output port
 									setDigitalOutput(outputPort, actionItems[gridDevIdx].type);
 								} else {
-									canWriteFrame(actionItems[gridDevIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, outputPort, (uint8_t)actionItems[gridDevIdx].type);
+									canWriteFrame(actionItems[gridDevIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::set, outputPort, (uint8_t)actionItems[gridDevIdx].type);
 								}
 							}
 						}
@@ -982,7 +982,7 @@ void loop() {
 			if (delays[delayIdx].deviceId == thisDeviceId) {
 				setDigitalOutput(delays[delayIdx].port, delays[delayIdx].type);
 			} else {
-				canWriteFrame(delays[delayIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::write, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
+				canWriteFrame(delays[delayIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::set, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
 			}
 			removeDelay(delays[delayIdx].deviceId, delays[delayIdx].port);
 		}
