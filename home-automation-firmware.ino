@@ -943,7 +943,7 @@ void loop() {
 		}
 
 		// Bypass actions on longpress
-		if (inputDigitals[inputPort].longpressRecorded == false && inputDigitals[inputPort].pressedTime > inputConfig[inputPort].longpress * 1000) {
+		if (inputConfig[inputPort].longpress > 0 && inputDigitals[inputPort].longpressRecorded == false && inputDigitals[inputPort].pressedTime > inputConfig[inputPort].longpress * 1000) {
 			inputDigitals[inputPort].longpressRecorded = true;
 			// Push event on input longpress
 			uint8_t commCtrl = (uint8_t)CommunicationCtrl::empty;
