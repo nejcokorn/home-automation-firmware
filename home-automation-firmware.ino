@@ -881,20 +881,21 @@ void loop() {
 			}
 		} else {
 			// With debounce logic
-			inputDigitals[inputPort].debounce += (currentValue == HIGH ? 1 : -1) * loopTimeDiff;
-			if (inputDigitals[inputPort].debounce > inputConfig[inputPort].debounce) {
-				inputDigitals[inputPort].debounce = inputConfig[inputPort].debounce;
-			} else if (inputDigitals[inputPort].debounce < 0) {
+			// Add to debounce counter
+			inputDigitals[inputPort].debounce += (currentValue != inputDigitals[inputPort].value ? 1 : -1) * loopTimeDiff;
+
+			// Make sure debounce is not less than zero
+			if (inputDigitals[inputPort].debounce < 0) {
 				inputDigitals[inputPort].debounce = 0;
 			}
 
-			// Debounce to logical values
-			if (inputDigitals[inputPort].debounce == inputConfig[inputPort].debounce && inputDigitals[inputPort].value == LOW) {
-				inputDigitals[inputPort].value = HIGH;
+			// Convert debounce to logical values
+			if (inputDigitals[inputPort].debounce > inputConfig[inputPort].debounce) {
+				// Set new value
+				inputDigitals[inputPort].value = inputDigitals[inputPort].value == HIGH ? LOW : HIGH;
 				inputChanged = true;
-			} else if (inputDigitals[inputPort].debounce == 0 && inputDigitals[inputPort].value == HIGH) {
-				inputDigitals[inputPort].value = LOW;
-				inputChanged = true;
+				// Reset debounce
+				inputDigitals[inputPort].debounce = 0;
 			}
 		}
 
