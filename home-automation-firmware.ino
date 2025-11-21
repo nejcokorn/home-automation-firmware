@@ -718,8 +718,17 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		if (isListDelays) {
-			// TODO
-			sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			// List all delays
+			for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
+				if (delays[delayIdx].active == true) {
+					dataCtrl = (uint8_t)DataCtrl::listDelays | (uint8_t)DataCtrl::digital | (uint8_t)DataCtrl::output | (uint8_t)DataCtrl::integer;
+					uint32_t delayData = (delays[delayIdx].deviceId << 24) | (uint8_t)delays[delayIdx].type;
+					sendAck(from, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delayData);
+					sendAck(from, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, 0xFF, (delays[delayIdx].time - micros())/1000);
+				}
+			}
+			// Send last package without wait and empty
+			sendAck(from, thisDeviceId, commCtrl, dataCtrl, 0xFF, 0);
 			return;
 		}
 		
