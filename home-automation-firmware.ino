@@ -343,7 +343,7 @@ void resetConfig() {
 	}
 }
 
-void saveConfig() {
+uint32_t saveConfig() {
 	uint32_t EEPROMPointer = 0;
 	EEPROM.put(EEPROMPointer, FIRMWARE_VERSION);
 	firmwareVersion = FIRMWARE_VERSION;
@@ -360,6 +360,7 @@ void saveConfig() {
 		EEPROM.put(EEPROMPointer, actionItems[i]);
 		EEPROMPointer += sizeof(actionItems[i]);
 	}
+	return EEPROMPointer;
 }
 
 void readConfig() {
@@ -539,8 +540,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 		// Write current configuration to EEPROM
 		if (isConfigSet == true && static_cast<ConfigOptions>(configOption) == ConfigOptions::writeEEPROM) {
 			// Store configuration into EEPROM
-			saveConfig();
-			sendAck(from, thisDeviceId, commCtrl, configCtrl, port, data);
+			uint32_t EEPROMSize = saveConfig();
+			sendAck(from, thisDeviceId, commCtrl, configCtrl, port, EEPROMSize);
 			return;
 		}
 
