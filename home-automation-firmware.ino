@@ -552,7 +552,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		if (isConfigSet) {
-			uint8_t actionDeviceId = data >> 16;
+			uint8_t actionDeviceId = data >> 24;
 			uint16_t actionPorts = data & 0xFFF;
 
 			switch (static_cast<ConfigOptions>(configOption)) {
@@ -659,7 +659,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 					// Send configurations for output ports related to all devices on grid
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionItems[i].inputPort == port) {
-							confData = actionItems[i].deviceId << 16 | actionItems[i].ports;
+							confData = actionItems[i].deviceId << 24 | actionItems[i].ports;
 							sendAck(from,
 								thisDeviceId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
