@@ -330,6 +330,7 @@ void resetConfig() {
 		actionItems[i].type      = ActionType::low;
 		actionItems[i].ports     = 0;
 		actionItems[i].delay     = 0;
+		actionItems[i].longpress = 0;
 	}
 }
 
