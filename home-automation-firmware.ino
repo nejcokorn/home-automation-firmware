@@ -84,7 +84,7 @@ enum class ActionType: uint8_t {
 };
 
 enum class ActionMode: uint8_t {
-	normal      = 0b00,
+	click       = 0b00,
 	longpress   = 0b01,
 	doubleclick = 0b10,
 };
@@ -333,7 +333,7 @@ void resetConfig() {
 	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
 		actionItems[i].deviceId  = 0xFF;
 		actionItems[i].inputPort = 0xFF;
-		actionItems[i].mode      = ActionMode::normal;
+		actionItems[i].mode      = ActionMode::click;
 		actionItems[i].type      = ActionType::low;
 		actionItems[i].ports     = 0;
 		actionItems[i].delay     = 0;
@@ -577,7 +577,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 						if (actionItems[i].inputPort == port) {
 							actionItems[i].deviceId = 0xFF;
 							actionItems[i].inputPort = 0xFF;
-							actionItems[i].mode = ActionMode::normal;
+							actionItems[i].mode = ActionMode::click;
 							actionItems[i].type = ActionType::low;
 							actionItems[i].ports = 0;
 							actionItems[i].delay = 0;
@@ -585,13 +585,13 @@ void canProcessFrame(const CAN_message_t& rx) {
 					}
 					break;
 				case ConfigOptions::actionLow:
-					updateActionItem(actionDeviceId, port, ActionMode::normal, ActionType::low, actionPorts);
+					updateActionItem(actionDeviceId, port, ActionMode::click, ActionType::low, actionPorts);
 					break;
 				case ConfigOptions::actionHigh:
-					updateActionItem(actionDeviceId, port, ActionMode::normal, ActionType::high, actionPorts);
+					updateActionItem(actionDeviceId, port, ActionMode::click, ActionType::high, actionPorts);
 					break;
 				case ConfigOptions::actionToggle:
-					updateActionItem(actionDeviceId, port, ActionMode::normal, ActionType::toggle, actionPorts);
+					updateActionItem(actionDeviceId, port, ActionMode::click, ActionType::toggle, actionPorts);
 					break;
 				case ConfigOptions::actionLongpressLow:
 					updateActionItem(actionDeviceId, port, ActionMode::longpress, ActionType::low, actionPorts);
@@ -791,9 +791,9 @@ void canProcessFrame(const CAN_message_t& rx) {
 // Main function to setup stm32
 void setup() {
 	// Map of actions to config types
-	actionToConfigType[(uint8_t)ActionMode::normal][(uint8_t)ActionType::low] = ConfigOptions::actionLow;
-	actionToConfigType[(uint8_t)ActionMode::normal][(uint8_t)ActionType::high] = ConfigOptions::actionHigh;
-	actionToConfigType[(uint8_t)ActionMode::normal][(uint8_t)ActionType::toggle] = ConfigOptions::actionToggle;
+	actionToConfigType[(uint8_t)ActionMode::click][(uint8_t)ActionType::low] = ConfigOptions::actionLow;
+	actionToConfigType[(uint8_t)ActionMode::click][(uint8_t)ActionType::high] = ConfigOptions::actionHigh;
+	actionToConfigType[(uint8_t)ActionMode::click][(uint8_t)ActionType::toggle] = ConfigOptions::actionToggle;
 	actionToConfigType[(uint8_t)ActionMode::longpress][(uint8_t)ActionType::low] = ConfigOptions::actionLongpressLow;
 	actionToConfigType[(uint8_t)ActionMode::longpress][(uint8_t)ActionType::high] = ConfigOptions::actionLongpressHigh;
 	actionToConfigType[(uint8_t)ActionMode::longpress][(uint8_t)ActionType::toggle] = ConfigOptions::actionLongpressToggle;
@@ -980,7 +980,7 @@ void loop() {
 			if (bypass) {
 				// Loop actions
 				for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
-					if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort && actionItems[gridDevIdx].mode == ActionMode::normal) {
+					if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort && actionItems[gridDevIdx].mode == ActionMode::click) {
 						execBypass(gridDevIdx);
 					}
 				}
