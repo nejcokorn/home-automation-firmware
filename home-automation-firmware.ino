@@ -56,24 +56,23 @@ enum class ConfigOptions: uint8_t {
 	writeEEPROM             = 0b00000000, // Write all configuration into EEPROM
 	buttonRisingEdge        = 0b00000001, // Input acts as a Button on rising edge
 	buttonFallingEdge       = 0b00000010, // Input acts as a Button on falling edge
-	switcher                = 0b00000011, // Input acts as Switch
-	debounce                = 0b00000100, // Debounce in microseconds
-	longpress               = 0b00000101, // Longpress in milliseconds
-	doubleclick             = 0b00000110, // Double-click in milliseconds
-	delay                   = 0b00000111, // Delay action in milliseconds
-	actions                 = 0b00001000, // Get/Reset all actions
-	actionToggle            = 0b00001001, // Action toggle output pins
-	actionHigh              = 0b00001010, // Action high output pins
-	actionLow               = 0b00001011, // Action low output pins
-	actionLongpressToggle   = 0b00001100, // Action longpress toggle output pins
-	actionLongpressHigh     = 0b00001101, // Action longpress high output pins
-	actionLongpressLow      = 0b00001110, // Action longpress low output pins
-	actionDoubleclickToggle = 0b00001111, // Action double-click toggle output pins
-	actionDoubleclickHigh   = 0b00010000, // Action double-click high output pins
-	actionDoubleclickLow    = 0b00010001, // Action double-click low output pins
-	bypassInstantly         = 0b00010010, // Bypass Instantly
-	bypassOnDIPSwitch       = 0b00010011, // Bypass determined by DIP switch
-	bypassOnDisconnect      = 0b00010100, // Bypass on disconnect in milliseconds
+	debounce                = 0b00000011, // Debounce in microseconds
+	longpress               = 0b00000100, // Longpress in milliseconds
+	doubleclick             = 0b00000101, // Double-click in milliseconds
+	delay                   = 0b00000110, // Delay action in milliseconds
+	actions                 = 0b00000111, // Get/Reset all actions
+	actionToggle            = 0b00001000, // Action toggle output pins
+	actionHigh              = 0b00001001, // Action high output pins
+	actionLow               = 0b00001010, // Action low output pins
+	actionLongpressToggle   = 0b00001011, // Action longpress toggle output pins
+	actionLongpressHigh     = 0b00001100, // Action longpress high output pins
+	actionLongpressLow      = 0b00001101, // Action longpress low output pins
+	actionDoubleclickToggle = 0b00001110, // Action double-click toggle output pins
+	actionDoubleclickHigh   = 0b00001111, // Action double-click high output pins
+	actionDoubleclickLow    = 0b00010000, // Action double-click low output pins
+	bypassInstantly         = 0b00010001, // Bypass Instantly
+	bypassOnDIPSwitch       = 0b00010010, // Bypass determined by DIP switch
+	bypassOnDisconnect      = 0b00010011, // Bypass on disconnect in milliseconds
 };
 
 // Action types
@@ -179,7 +178,6 @@ struct Command {
 struct ConfigRegister {
 	bool isButtonRisingEdge;
 	bool isButtonFallingEdge;
-	bool isSwitch;
 	int32_t debounce; // trigger in microseconds
 	int32_t longpress; // trigger in microseconds
 	int32_t doubleclick; // trigger in microseconds
@@ -322,7 +320,6 @@ void resetConfig() {
 		ConfigRegister config{};
 		config.isButtonRisingEdge  = false;
 		config.isButtonFallingEdge = false;
-		config.isSwitch            = false;
 		config.debounce            = 0;
 		config.longpress           = 0;
 		config.doubleclick         = 0;
@@ -562,9 +559,6 @@ void canProcessFrame(const CAN_message_t& rx) {
 				case ConfigOptions::buttonFallingEdge:
 					inputConfig[port].isButtonFallingEdge = data > 0;
 					break;
-				case ConfigOptions::switcher:
-					inputConfig[port].isSwitch = data > 0;
-					break;
 				case ConfigOptions::debounce:
 					inputConfig[port].debounce = data;
 					break;
@@ -641,9 +635,6 @@ void canProcessFrame(const CAN_message_t& rx) {
 					break;
 				case ConfigOptions::buttonFallingEdge:
 					confData = inputConfig[port].isButtonFallingEdge ? 1 : 0;
-					break;
-				case ConfigOptions::switcher:
-					confData = inputConfig[port].isSwitch ? 1 : 0;
 					break;
 				case ConfigOptions::debounce:
 					confData = ((uint32_t)inputConfig[port].debounce);
@@ -943,7 +934,7 @@ void loop() {
 		}
 
 		// Record click
-		if (inputChanged && (inputConfig[inputPort].isSwitch || (inputConfig[inputPort].isButtonRisingEdge && inputDigitals[inputPort].value == HIGH) || (inputConfig[inputPort].isButtonFallingEdge && inputDigitals[inputPort].value == LOW))) {
+		if (inputChanged && ((inputConfig[inputPort].isButtonRisingEdge && inputDigitals[inputPort].value == HIGH) || (inputConfig[inputPort].isButtonFallingEdge && inputDigitals[inputPort].value == LOW))) {
 			inputDigitals[inputPort].previousClickTime = inputDigitals[inputPort].clickTime;
 			inputDigitals[inputPort].clickTime = loopTime;
 
