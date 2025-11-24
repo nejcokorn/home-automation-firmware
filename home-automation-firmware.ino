@@ -57,22 +57,15 @@ enum class ConfigOptions: uint8_t {
 	buttonRisingEdge        = 0b00000001, // Input acts as a Button on rising edge
 	buttonFallingEdge       = 0b00000010, // Input acts as a Button on falling edge
 	debounce                = 0b00000011, // Debounce in microseconds
-	longpress               = 0b00000100, // Longpress in milliseconds
-	doubleclick             = 0b00000101, // Double-click in milliseconds
-	delay                   = 0b00000110, // Delay action in milliseconds
-	actions                 = 0b00000111, // Get/Reset all actions
-	actionToggle            = 0b00001000, // Action toggle output pins
-	actionHigh              = 0b00001001, // Action high output pins
-	actionLow               = 0b00001010, // Action low output pins
-	actionLongpressToggle   = 0b00001011, // Action longpress toggle output pins
-	actionLongpressHigh     = 0b00001100, // Action longpress high output pins
-	actionLongpressLow      = 0b00001101, // Action longpress low output pins
-	actionDoubleclickToggle = 0b00001110, // Action double-click toggle output pins
-	actionDoubleclickHigh   = 0b00001111, // Action double-click high output pins
-	actionDoubleclickLow    = 0b00010000, // Action double-click low output pins
-	bypassInstantly         = 0b00010001, // Bypass Instantly
-	bypassOnDIPSwitch       = 0b00010010, // Bypass determined by DIP switch
-	bypassOnDisconnect      = 0b00010011, // Bypass on disconnect in milliseconds
+	doubleclick             = 0b00000100, // Double-click in milliseconds
+	actions                 = 0b00000101, // Get/Reset all actions
+	actionBase              = 0b00000110, // Action P1 deviceId (B5), mode (B7), type (B8)
+	actionPorts             = 0b00000111, // Action P2 ports (map)
+	actionDelay             = 0b00001000, // Action P3 delay in milliseconds
+	actionLongpress         = 0b00001001, // Action P4 longpress in milliseconds
+	bypassInstantly         = 0b00001010, // Bypass Instantly
+	bypassOnDIPSwitch       = 0b00001011, // Bypass determined by DIP switch
+	bypassOnDisconnect      = 0b00001100, // Bypass on disconnect in milliseconds
 };
 
 // Action types
@@ -94,7 +87,7 @@ enum class ActionMode: uint8_t {
 #define SIZE_INPUT_DIGITAL   16
 #define SIZE_INPUT_ANALOG    4
 #define SIZE_OUTPUT_DIGITAL  12
-#define SIZE_ACTION_MAP      128
+#define SIZE_ACTION_MAP      80
 #define SIZE_DELAYS          128
 
 // Error codes (packed in Data on error/ack)
@@ -130,7 +123,6 @@ struct InputDigital {
 	uint64_t previousClickTime;
 	bool processClick;
 	bool processDoubleclick;
-	bool processLongpress;
 };
 InputDigital inputDigitals[SIZE_INPUT_DIGITAL];
 
@@ -156,6 +148,8 @@ struct ActionItem {
 	ActionMode mode;
 	uint16_t ports;
 	uint32_t delay;
+	bool processLongpress;
+	uint32_t longpress;
 };
 
 struct Command {
@@ -191,7 +185,6 @@ ConfigRegister inputConfig[SIZE_INPUT_DIGITAL];
 ActionItem actionItems[SIZE_ACTION_MAP];
 ActionItem* lastActionItem = nullptr;
 Command execCommand;
-ConfigOptions actionToConfigType[3][3];
 
 // Global variables
 uint64_t loopTimeLast = 0;
@@ -378,7 +371,7 @@ void readConfig() {
 	}
 }
 
-void updateActionItem(uint8_t deviceId, uint8_t inputPort, ActionMode mode, ActionType type, uint16_t actionPorts) {
+void updateActionItem(uint8_t deviceId, uint8_t inputPort, ActionMode mode, ActionType type) {
 	// Add mapping if ports for device are defined
 	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 		if (actionItems[i].deviceId == 0xFF) {
@@ -386,15 +379,22 @@ void updateActionItem(uint8_t deviceId, uint8_t inputPort, ActionMode mode, Acti
 			actionItems[i].inputPort = inputPort;
 			actionItems[i].mode = mode;
 			actionItems[i].type = type;
-			actionItems[i].ports = actionPorts;
 			lastActionItem = &actionItems[i];
 			break;
 		}
 	}
 }
 
+void updateActionPorts(uint16_t ports) {
+	lastActionItem->ports = ports;
+}
+
 void updateActionDelay(uint32_t delay) {
 	lastActionItem->delay = delay;
+}
+
+void updateActionLongpress(uint32_t longpress) {
+	lastActionItem->longpress = longpress;
 }
 
 void resetCommand(Command* execCommand) {
@@ -549,9 +549,6 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		if (isConfigSet) {
-			uint8_t actionDeviceId = data >> 24;
-			uint16_t actionPorts = data & 0xFFF;
-
 			switch (static_cast<ConfigOptions>(configOption)) {
 				case ConfigOptions::buttonRisingEdge:
 					inputConfig[port].isButtonRisingEdge = data > 0;
@@ -562,14 +559,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 				case ConfigOptions::debounce:
 					inputConfig[port].debounce = data;
 					break;
-				case ConfigOptions::longpress:
-					inputConfig[port].longpress = data;
-					break;
 				case ConfigOptions::doubleclick:
 					inputConfig[port].doubleclick = data;
-					break;
-				case ConfigOptions::delay:
-					updateActionDelay(data);
 					break;
 				case ConfigOptions::actions:
 					// Remove all actions for specific port
@@ -581,35 +572,27 @@ void canProcessFrame(const CAN_message_t& rx) {
 							actionItems[i].type = ActionType::low;
 							actionItems[i].ports = 0;
 							actionItems[i].delay = 0;
+							actionItems[i].longpress = 0;
 						}
 					}
 					break;
-				case ConfigOptions::actionLow:
-					updateActionItem(actionDeviceId, port, ActionMode::click, ActionType::low, actionPorts);
+				case ConfigOptions::actionBase: {
+					uint8_t actionDeviceId = data >> 24;
+					ActionMode mode = (ActionMode)((data >> 8) & 0xFF);
+					ActionType type = (ActionType)(data & 0xFF);
+					updateActionItem(actionDeviceId, port, mode, type);
 					break;
-				case ConfigOptions::actionHigh:
-					updateActionItem(actionDeviceId, port, ActionMode::click, ActionType::high, actionPorts);
+				}
+				case ConfigOptions::actionPorts: {
+					uint16_t actionPorts = data & 0xFFF;
+					updateActionPorts(actionPorts);
 					break;
-				case ConfigOptions::actionToggle:
-					updateActionItem(actionDeviceId, port, ActionMode::click, ActionType::toggle, actionPorts);
+				}
+				case ConfigOptions::actionDelay:
+					updateActionDelay(data);
 					break;
-				case ConfigOptions::actionLongpressLow:
-					updateActionItem(actionDeviceId, port, ActionMode::longpress, ActionType::low, actionPorts);
-					break;
-				case ConfigOptions::actionLongpressHigh:
-					updateActionItem(actionDeviceId, port, ActionMode::longpress, ActionType::high, actionPorts);
-					break;
-				case ConfigOptions::actionLongpressToggle:
-					updateActionItem(actionDeviceId, port, ActionMode::longpress, ActionType::toggle, actionPorts);
-					break;
-				case ConfigOptions::actionDoubleclickLow:
-					updateActionItem(actionDeviceId, port, ActionMode::doubleclick, ActionType::low, actionPorts);
-					break;
-				case ConfigOptions::actionDoubleclickHigh:
-					updateActionItem(actionDeviceId, port, ActionMode::doubleclick, ActionType::high, actionPorts);
-					break;
-				case ConfigOptions::actionDoubleclickToggle:
-					updateActionItem(actionDeviceId, port, ActionMode::doubleclick, ActionType::toggle, actionPorts);
+				case ConfigOptions::actionLongpress:
+					updateActionLongpress(data);
 					break;
 				case ConfigOptions::bypassInstantly:
 					inputConfig[port].bypassInstantly = data > 0;
@@ -639,9 +622,6 @@ void canProcessFrame(const CAN_message_t& rx) {
 				case ConfigOptions::debounce:
 					confData = ((uint32_t)inputConfig[port].debounce);
 					break;
-				case ConfigOptions::longpress:
-					confData = ((uint32_t)inputConfig[port].longpress);
-					break;
 				case ConfigOptions::doubleclick:
 					confData = ((uint32_t)inputConfig[port].doubleclick);
 					break;
@@ -650,23 +630,38 @@ void canProcessFrame(const CAN_message_t& rx) {
 					// Send configurations for output ports related to all devices on grid
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionItems[i].inputPort == port) {
-							confData = actionItems[i].deviceId << 24 | actionItems[i].ports;
+							confData = actionItems[i].deviceId << 24 | ((uint8_t)actionItems[i].mode) << 8 | (uint8_t)actionItems[i].type;
+							// P1 - action base
 							sendAck(from,
 								thisDeviceId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
-								(uint8_t)ConfigCtrl::configBit | (uint8_t)actionToConfigType[(uint8_t)actionItems[i].mode][(uint8_t)actionItems[i].type],
+								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionBase,
 								port,
 								confData);
 							
-							if (actionItems[i].delay != 0) {
-								// Send information about action delay
-								sendAck(from,
-									thisDeviceId,
-									commCtrl | (uint8_t)CommunicationCtrl::waitBit,
-									(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::delay,
-									port,
-									actionItems[i].delay);
-							}
+							// P2 - action ports
+							sendAck(from,
+								thisDeviceId,
+								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionPorts,
+								port,
+								actionItems[i].ports);
+									
+							// P3 - action delay
+							sendAck(from,
+								thisDeviceId,
+								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionDelay,
+								port,
+								actionItems[i].delay);
+							
+							// P4 - action longpress in milliseconds
+							sendAck(from,
+								thisDeviceId,
+								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionLongpress,
+								port,
+								actionItems[i].longpress);
 						}
 					}
 					// Send last package as empty
@@ -790,17 +785,6 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 // Main function to setup stm32
 void setup() {
-	// Map of actions to config types
-	actionToConfigType[(uint8_t)ActionMode::click][(uint8_t)ActionType::low] = ConfigOptions::actionLow;
-	actionToConfigType[(uint8_t)ActionMode::click][(uint8_t)ActionType::high] = ConfigOptions::actionHigh;
-	actionToConfigType[(uint8_t)ActionMode::click][(uint8_t)ActionType::toggle] = ConfigOptions::actionToggle;
-	actionToConfigType[(uint8_t)ActionMode::longpress][(uint8_t)ActionType::low] = ConfigOptions::actionLongpressLow;
-	actionToConfigType[(uint8_t)ActionMode::longpress][(uint8_t)ActionType::high] = ConfigOptions::actionLongpressHigh;
-	actionToConfigType[(uint8_t)ActionMode::longpress][(uint8_t)ActionType::toggle] = ConfigOptions::actionLongpressToggle;
-	actionToConfigType[(uint8_t)ActionMode::doubleclick][(uint8_t)ActionType::low] = ConfigOptions::actionDoubleclickLow;
-	actionToConfigType[(uint8_t)ActionMode::doubleclick][(uint8_t)ActionType::high] = ConfigOptions::actionDoubleclickHigh;
-	actionToConfigType[(uint8_t)ActionMode::doubleclick][(uint8_t)ActionType::toggle] = ConfigOptions::actionDoubleclickToggle;
-
 	// Compute DIP switches to get device id
 	thisDeviceId = computeDeviceAddress();
 
@@ -819,7 +803,6 @@ void setup() {
 		input.debounce           = 0;
 		input.processClick       = false;
 		input.processDoubleclick = false;
-		input.processLongpress   = false;
 		inputDigitals[inputPort] = input;
 	}
 
@@ -941,7 +924,16 @@ void loop() {
 			// Reset events
 			inputDigitals[inputPort].processClick = true;
 			inputDigitals[inputPort].processDoubleclick = true;
-			inputDigitals[inputPort].processLongpress = true;
+
+			for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+				if (actionItems[gridDevIdx].deviceId != 0xFF
+					&& actionItems[gridDevIdx].inputPort == inputPort
+					&& actionItems[gridDevIdx].mode == ActionMode::longpress
+					&& actionItems[gridDevIdx].longpress > 0
+				) {
+					actionItems[gridDevIdx].processLongpress = true;
+				}
+			}
 		}
 
 		// Bypass actions on double click
@@ -988,16 +980,16 @@ void loop() {
 		}
 
 		// Bypass actions on longpress
-		if (inputConfig[inputPort].longpress > 0 && inputDigitals[inputPort].processLongpress == true && loopTime - inputDigitals[inputPort].clickTime > inputConfig[inputPort].longpress) {
-			inputDigitals[inputPort].processLongpress = false;
-
-			// Only take bypass actions when criteria has been meat
-			if (bypass) {
-				// Action longpress events
-				for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
-					if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort && actionItems[gridDevIdx].mode == ActionMode::longpress) {
-						execBypass(gridDevIdx);
-					}
+		for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+			if (actionItems[gridDevIdx].inputPort == inputPort
+				&& actionItems[gridDevIdx].processLongpress == true
+				&& loopTime - inputDigitals[inputPort].clickTime > actionItems[gridDevIdx].longpress
+			) {
+				canWriteFrame(0xFA, thisDeviceId, 0, 0, 0, actionItems[gridDevIdx].longpress);
+				actionItems[gridDevIdx].processLongpress = false;
+				// Only take bypass actions when criteria has been meat
+				if (bypass) {
+					execBypass(gridDevIdx);
 				}
 			}
 		}
