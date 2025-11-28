@@ -53,27 +53,34 @@ enum class ConfigCtrl: uint8_t {
 
 // Config options
 enum class ConfigOptions: uint8_t {
-	writeEEPROM             = 0b00000000, // Write all configuration into EEPROM
-	buttonRisingEdge        = 0b00000001, // Input acts as a Button on rising edge
-	buttonFallingEdge       = 0b00000010, // Input acts as a Button on falling edge
-	debounce                = 0b00000011, // Debounce in microseconds
-	doubleclick             = 0b00000100, // Double-click in milliseconds
-	actions                 = 0b00000101, // Get/Reset all actions
-	actionBase              = 0b00000110, // Action P1 deviceId (B5), mode (B7), type (B8)
-	actionPorts             = 0b00000111, // Action P2 ports (map)
-	actionDelay             = 0b00001000, // Action P3 delay in milliseconds
-	actionLongpress         = 0b00001001, // Action P4 longpress in milliseconds
-	bypassInstantly         = 0b00001010, // Bypass Instantly
-	bypassOnDIPSwitch       = 0b00001011, // Bypass determined by DIP switch
-	bypassOnDisconnect      = 0b00001100, // Bypass on disconnect in milliseconds
+	writeEEPROM         = 0x01, // Write all configuration into EEPROM
+	debounce            = 0x02, // Debounce in microseconds
+	doubleclick         = 0x03, // Double-click in milliseconds
+	actions             = 0x04, // Get/Reset all actions
+	actionBase          = 0x05, // Action P1 deviceId (B5), trigger (B6), mode (B7), type (B8)
+	actionPorts         = 0x06, // Action P2 ports (map)
+	actionSkipWhenDelay = 0x07, // Action P3 skip action if delay is present in any of the output ports (map)
+	actionClearDelays   = 0x08, // Action P4 clear all delays on all specified output ports (map)
+	actionDelay         = 0x09, // Action P5 delay in milliseconds
+	actionLongpress     = 0x0A, // Action P6 longpress in milliseconds
+	bypassInstantly     = 0x0B, // Bypass Instantly
+	bypassOnDIPSwitch   = 0x0C, // Bypass determined by DIP switch
+	bypassOnDisconnect  = 0x0D, // Bypass on disconnect in milliseconds
+};
+
+// Action types
+enum class ActionTrigger: uint8_t {
+	disabled     = 0x00, // No trigger
+	rising       = 0x01, // Trigger on input port - Rising edge
+	falling      = 0x02, // Trigger on input port - Falling edge
 };
 
 // Action types
 enum class ActionType: uint8_t {
-	low    = LOW,
-	high   = HIGH,
-	toggle = 0b10,
-	pwm    = 0b11,
+	low          = LOW,
+	high         = HIGH,
+	toggle       = 0b010,
+	pwm          = 0b110,
 };
 
 enum class ActionMode: uint8_t {
@@ -87,7 +94,7 @@ enum class ActionMode: uint8_t {
 #define SIZE_INPUT_DIGITAL   16
 #define SIZE_INPUT_ANALOG    4
 #define SIZE_OUTPUT_DIGITAL  12
-#define SIZE_ACTION_MAP      80
+#define SIZE_ACTION_MAP      256
 #define SIZE_DELAYS          128
 
 // Error codes (packed in Data on error/ack)
@@ -119,10 +126,7 @@ struct InputDigital {
 	uint8_t pin;
 	uint8_t value;
 	int32_t debounce;
-	uint64_t clickTime;
-	uint64_t previousClickTime;
-	bool processClick;
-	bool processDoubleclick;
+	bool bypass;
 };
 InputDigital inputDigitals[SIZE_INPUT_DIGITAL];
 
@@ -144,12 +148,20 @@ Delay delays[SIZE_DELAYS];
 struct ActionItem {
 	uint8_t deviceId;
 	uint8_t inputPort;
+	ActionTrigger trigger;
 	ActionType type;
 	ActionMode mode;
+	uint16_t skipWhenDelay;
+	uint16_t clearDelay;
 	uint16_t ports;
 	uint32_t delay;
-	bool processLongpress;
 	uint32_t longpress;
+	// Internal tracking information
+	bool processClick;
+	bool processDoubleclick;
+	bool processLongpress;
+	uint64_t clickTime;
+	uint64_t previousClickTime;
 };
 
 struct Command {
@@ -170,10 +182,7 @@ struct Command {
 };
 
 struct ConfigRegister {
-	bool isButtonRisingEdge;
-	bool isButtonFallingEdge;
 	int32_t debounce; // trigger in microseconds
-	int32_t longpress; // trigger in microseconds
 	int32_t doubleclick; // trigger in microseconds
 	bool bypassInstantly;
 	bool bypassOnDIPSwitch;
@@ -259,26 +268,38 @@ void setDigitalOutput(uint8_t port, ActionType actionType) {
 	if (port < SIZE_OUTPUT_DIGITAL) {
 		// Calculate new value
 		uint32_t value;
+
+		// Set new value
 		if (actionType == ActionType::toggle){
+			// Toggle current value
 			value = outputDigitals[port].value == HIGH ? LOW : HIGH;
-		} else {
-			// LOW/HIGH
-			value = (uint32_t)actionType;
+		} else if(actionType == ActionType::low) {
+			// Set new value as LOW
+			value = LOW;
+		} else if(actionType == ActionType::high) {
+			// Set new value as HIGH
+			value = HIGH;
 		}
+
 		// If value has changed, push data change frame
 		if (outputDigitals[port].value != value){
 			uint8_t commCtrl = 0x00;
 			uint8_t dataCtrl = (uint8_t)DataCtrl::bit;
 			canWriteFrame(0xFF, thisDeviceId, commCtrl, dataCtrl, port, value);
-		}
 
-		// Do the actuall change
-		digitalWrite(outputDigitalPins[port], value);
-		outputDigitals[port].value = value;
+			// Do the actuall change
+			digitalWrite(outputDigitalPins[port], value);
+			outputDigitals[port].value = value;
+		}
 
 		// Remove all related delays
 		removeDelay(thisDeviceId, port);
 	}
+}
+
+void setDigitalOutputRemote(uint8_t deviceId, uint8_t port, ActionType actionType) {
+	// Send command to change remote output port
+	canWriteFrame(deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::set, port, (uint8_t)actionType);
 }
 
 void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
@@ -307,14 +328,29 @@ void removeDelay(uint8_t deviceId, uint8_t port) {
 	}
 }
 
+void resetActionItem(uint16_t idx) {
+	actionItems[idx].deviceId           = 0xFF;
+	actionItems[idx].inputPort          = 0xFF;
+	actionItems[idx].trigger            = ActionTrigger::disabled;
+	actionItems[idx].mode               = ActionMode::click;
+	actionItems[idx].type               = ActionType::low;
+	actionItems[idx].skipWhenDelay      = 0;
+	actionItems[idx].clearDelay         = 0;
+	actionItems[idx].ports              = 0;
+	actionItems[idx].delay              = 0;
+	actionItems[idx].longpress          = 0;
+	actionItems[idx].processClick       = false;
+	actionItems[idx].processDoubleclick = false;
+	actionItems[idx].processLongpress   = false;
+	actionItems[idx].clickTime          = 0;
+	actionItems[idx].previousClickTime  = 0;
+}
+
 void resetConfig() {
 	// Reset input configuration
 	for (uint8_t inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
 		ConfigRegister config{};
-		config.isButtonRisingEdge  = false;
-		config.isButtonFallingEdge = false;
 		config.debounce            = 0;
-		config.longpress           = 0;
 		config.doubleclick         = 0;
 		config.bypassInstantly     = false;
 		config.bypassOnDIPSwitch   = false;
@@ -323,14 +359,8 @@ void resetConfig() {
 	}
 
 	// Reset actions
-	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
-		actionItems[i].deviceId  = 0xFF;
-		actionItems[i].inputPort = 0xFF;
-		actionItems[i].mode      = ActionMode::click;
-		actionItems[i].type      = ActionType::low;
-		actionItems[i].ports     = 0;
-		actionItems[i].delay     = 0;
-		actionItems[i].longpress = 0;
+	for (uint16_t idx = 0; idx < SIZE_ACTION_MAP; idx++){
+		resetActionItem(idx);
 	}
 }
 
@@ -372,15 +402,17 @@ void readConfig() {
 	}
 }
 
-void updateActionItem(uint8_t deviceId, uint8_t inputPort, ActionMode mode, ActionType type) {
+void updateActionItem(uint8_t deviceId, uint8_t inputPort, ActionTrigger trigger, ActionMode mode, ActionType type) {
 	// Add mapping if ports for device are defined
-	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
-		if (actionItems[i].deviceId == 0xFF) {
-			actionItems[i].deviceId = deviceId;
-			actionItems[i].inputPort = inputPort;
-			actionItems[i].mode = mode;
-			actionItems[i].type = type;
-			lastActionItem = &actionItems[i];
+	for (uint16_t idx = 0; idx < SIZE_ACTION_MAP; idx++) {
+		if (actionItems[idx].deviceId == 0xFF) {
+			resetActionItem(idx);
+			actionItems[idx].deviceId = deviceId;
+			actionItems[idx].inputPort = inputPort;
+			actionItems[idx].trigger = trigger;
+			actionItems[idx].mode = mode;
+			actionItems[idx].type = type;
+			lastActionItem = &actionItems[idx];
 			break;
 		}
 	}
@@ -423,8 +455,7 @@ void execBypass(uint8_t gridDevIdx) {
 				// Change value of local output port
 				setDigitalOutput(outputPort, actionItems[gridDevIdx].type);
 			} else {
-				// Send command to change remote output port
-				canWriteFrame(actionItems[gridDevIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::set, outputPort, (uint8_t)actionItems[gridDevIdx].type);
+				setDigitalOutputRemote(actionItems[gridDevIdx].deviceId, outputPort, actionItems[gridDevIdx].type);
 			}
 		}
 	}
@@ -551,12 +582,6 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 		if (isConfigSet) {
 			switch (static_cast<ConfigOptions>(configOption)) {
-				case ConfigOptions::buttonRisingEdge:
-					inputConfig[port].isButtonRisingEdge = data > 0;
-					break;
-				case ConfigOptions::buttonFallingEdge:
-					inputConfig[port].isButtonFallingEdge = data > 0;
-					break;
 				case ConfigOptions::debounce:
 					inputConfig[port].debounce = data;
 					break;
@@ -565,23 +590,18 @@ void canProcessFrame(const CAN_message_t& rx) {
 					break;
 				case ConfigOptions::actions:
 					// Remove all actions for specific port
-					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
-						if (actionItems[i].inputPort == port) {
-							actionItems[i].deviceId = 0xFF;
-							actionItems[i].inputPort = 0xFF;
-							actionItems[i].mode = ActionMode::click;
-							actionItems[i].type = ActionType::low;
-							actionItems[i].ports = 0;
-							actionItems[i].delay = 0;
-							actionItems[i].longpress = 0;
+					for (uint16_t idx = 0; idx < SIZE_ACTION_MAP; idx++) {
+						if (actionItems[idx].inputPort == port) {
+							resetActionItem(idx);
 						}
 					}
 					break;
 				case ConfigOptions::actionBase: {
 					uint8_t actionDeviceId = data >> 24;
+					ActionTrigger trigger = (ActionTrigger)((data >> 16) & 0xFF);
 					ActionMode mode = (ActionMode)((data >> 8) & 0xFF);
 					ActionType type = (ActionType)(data & 0xFF);
-					updateActionItem(actionDeviceId, port, mode, type);
+					updateActionItem(actionDeviceId, port, trigger, mode, type);
 					break;
 				}
 				case ConfigOptions::actionPorts: {
@@ -614,12 +634,6 @@ void canProcessFrame(const CAN_message_t& rx) {
 		} else if (isConfigGet) {
 			uint32_t confData = 0;
 			switch (static_cast<ConfigOptions>(configOption)) {
-				case ConfigOptions::buttonRisingEdge:
-					confData = inputConfig[port].isButtonRisingEdge ? 1 : 0;
-					break;
-				case ConfigOptions::buttonFallingEdge:
-					confData = inputConfig[port].isButtonFallingEdge ? 1 : 0;
-					break;
 				case ConfigOptions::debounce:
 					confData = ((uint32_t)inputConfig[port].debounce);
 					break;
@@ -631,7 +645,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 					// Send configurations for output ports related to all devices on grid
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionItems[i].inputPort == port) {
-							confData = actionItems[i].deviceId << 24 | ((uint8_t)actionItems[i].mode) << 8 | (uint8_t)actionItems[i].type;
+							confData = actionItems[i].deviceId << 24 | ((uint8_t)actionItems[i].trigger) << 16 | ((uint8_t)actionItems[i].mode) << 8 | (uint8_t)actionItems[i].type;
 							// P1 - action base
 							sendAck(from,
 								thisDeviceId,
@@ -799,11 +813,10 @@ void setup() {
 
 		// Create object
 		InputDigital input{};
-		input.pin                = inputDigitalPins[inputPort];
-		input.value              = digitalRead(inputDigitalPins[inputPort]) == HIGH ? 0 : 1;
-		input.debounce           = 0;
-		input.processClick       = false;
-		input.processDoubleclick = false;
+		input.pin      = inputDigitalPins[inputPort];
+		input.value    = digitalRead(inputDigitalPins[inputPort]) == HIGH ? 0 : 1;
+		input.debounce = 0;
+		input.bypass   = false;
 		inputDigitals[inputPort] = input;
 	}
 
@@ -835,7 +848,7 @@ void setup() {
 	for (int pin = 0; pin < 2; pin++) {
 		pinMode(configurationPins[pin], INPUT_PULLUP);
 	}
-	
+
 	// Read configuration from EEPROM
 	readConfig();
 
@@ -875,11 +888,13 @@ void loop() {
 	// Read bypass config every loop
 	dipSwitchBypass = digitalRead(C_02) == LOW ? true : false;
 
-	// Scan inputs and detect changes (for potential push events)
+	// Scan inputs and detect changes (for potential push events/actions)
 	for (int inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
-		uint8_t currentValue = digitalRead(inputDigitalPins[inputPort]) == HIGH ? 0 : 1;
+		uint8_t currentValue = digitalRead(inputDigitalPins[inputPort]) == HIGH ? LOW : HIGH;
 		bool inputChanged = false;
-		bool bypass = inputConfig[inputPort].bypassInstantly == true
+		
+		// Calculate bypass criteria
+		inputDigitals[inputPort].bypass = inputConfig[inputPort].bypassInstantly == true
 				|| inputConfig[inputPort].bypassOnDisconnect != 0 && loopTime - lastSyncRemote > inputConfig[inputPort].bypassOnDisconnect
 				|| dipSwitchBypass && inputConfig[inputPort].bypassOnDIPSwitch == true;
 
@@ -902,7 +917,7 @@ void loop() {
 			// Convert debounce to logical values
 			if (inputDigitals[inputPort].debounce > inputConfig[inputPort].debounce) {
 				// Set new value
-				inputDigitals[inputPort].value = inputDigitals[inputPort].value == HIGH ? LOW : HIGH;
+				inputDigitals[inputPort].value = currentValue;
 				inputChanged = true;
 				// Reset debounce
 				inputDigitals[inputPort].debounce = 0;
@@ -915,84 +930,108 @@ void loop() {
 			uint8_t dataCtrl = (uint8_t)DataCtrl::input | (uint8_t)DataCtrl::bit;
 			// Push to a broadcast address
 			canWriteFrame(0xFF, thisDeviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].value);
-		}
 
-		// Record click
-		if (inputChanged && ((inputConfig[inputPort].isButtonRisingEdge && inputDigitals[inputPort].value == HIGH) || (inputConfig[inputPort].isButtonFallingEdge && inputDigitals[inputPort].value == LOW))) {
-			inputDigitals[inputPort].previousClickTime = inputDigitals[inputPort].clickTime;
-			inputDigitals[inputPort].clickTime = loopTime;
+			// Only take bypass actions when bypass criteria have been met
+			if (inputDigitals[inputPort].bypass) {
+				// Loop actions
+				for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+					if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort) {
+						// Make sure trigger matches action trigger
+						if ((actionItems[gridDevIdx].trigger == ActionTrigger::rising && inputDigitals[inputPort].value == HIGH) || (actionItems[gridDevIdx].trigger == ActionTrigger::falling && inputDigitals[inputPort].value == LOW)){
+							// Set timeings
+							actionItems[gridDevIdx].previousClickTime = actionItems[gridDevIdx].clickTime;
+							actionItems[gridDevIdx].clickTime = loopTime;
 
-			// Reset events
-			inputDigitals[inputPort].processClick = true;
-			inputDigitals[inputPort].processDoubleclick = true;
+							// Set click markers
+							actionItems[gridDevIdx].processClick = true;
+							actionItems[gridDevIdx].processDoubleclick = true;
 
-			for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
-				if (actionItems[gridDevIdx].deviceId != 0xFF
-					&& actionItems[gridDevIdx].inputPort == inputPort
-					&& actionItems[gridDevIdx].mode == ActionMode::longpress
-					&& actionItems[gridDevIdx].longpress > 0
-				) {
-					actionItems[gridDevIdx].processLongpress = true;
+							// Set longpress markers
+							if (actionItems[gridDevIdx].mode == ActionMode::longpress && actionItems[gridDevIdx].longpress > 0) {
+								actionItems[gridDevIdx].processLongpress = true;
+							}
+						}
+					}
 				}
 			}
 		}
+	}
 
-		// Bypass actions on double click
-		if (inputDigitals[inputPort].processDoubleclick == true && inputDigitals[inputPort].clickTime - inputDigitals[inputPort].previousClickTime < inputConfig[inputPort].doubleclick) {
-			// Unset single and double clicks
-			inputDigitals[inputPort].processClick = false;
-			inputDigitals[inputPort].processDoubleclick = false;
+	// Bypass actions on double click
+	for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+		if (actionItems[gridDevIdx].deviceId != 0xFF
+			&& inputDigitals[actionItems[gridDevIdx].inputPort].bypass
+			&& actionItems[gridDevIdx].processDoubleclick == true
+			&& actionItems[gridDevIdx].mode == ActionMode::doubleclick
+			&& actionItems[gridDevIdx].clickTime - actionItems[gridDevIdx].previousClickTime < inputConfig[actionItems[gridDevIdx].inputPort].doubleclick
+		) {
+			// Unset click markers
+			actionItems[gridDevIdx].processDoubleclick = false;
 			
 			// Only take bypass actions when criteria has been meat
-			if (bypass) {
-				// Loop actions
-				for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
-					if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort && actionItems[gridDevIdx].mode == ActionMode::doubleclick) {
-						execBypass(gridDevIdx);
-					}
-				}
+			execBypass(gridDevIdx);
+
+			// Unset marker for action items with click mode with the same trigger type
+			for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+				if (actionItems[i].deviceId != 0xFF
+					&& actionItems[i].inputPort == actionItems[gridDevIdx].inputPort
+					&& actionItems[i].trigger == actionItems[gridDevIdx].trigger
+					&& actionItems[i].mode == ActionMode::click
+				) {
+					actionItems[i].processClick = false;
+				}	
 			}
 		}
+	}
 
-		// Bypass actions on single click
-		if (inputDigitals[inputPort].processClick == true // Only when click needs processing
-			&& (
-				inputConfig[inputPort].doubleclick == 0 // Skip when no double click configured
+	// Bypass actions on single click
+	for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+		if (actionItems[gridDevIdx].deviceId != 0xFF
+			&& inputDigitals[actionItems[gridDevIdx].inputPort].bypass
+			&& actionItems[gridDevIdx].processClick == true
+			&& actionItems[gridDevIdx].mode == ActionMode::click
+		) { // Only when click needs processing
+			if (inputConfig[actionItems[gridDevIdx].inputPort].doubleclick == 0 // No double click configured - continue to process click
 				|| (
-					// If still pressed after half of the double click time consider it as single click
-					loopTime - inputDigitals[inputPort].clickTime > inputConfig[inputPort].doubleclick * 0.6
-					&& (inputConfig[inputPort].isButtonRisingEdge && inputDigitals[inputPort].value == HIGH) || (inputConfig[inputPort].isButtonFallingEdge && inputDigitals[inputPort].value == LOW)
+					// If still pressed after portion of the double click time, consider it as single click
+					loopTime - actionItems[gridDevIdx].clickTime > inputConfig[actionItems[gridDevIdx].inputPort].doubleclick * 0.6
 				) || (
-					// First click was realy fast, waiting for second click
-					loopTime - inputDigitals[inputPort].clickTime > inputConfig[inputPort].doubleclick
+					// Wait full time, possible double click
+					loopTime - actionItems[gridDevIdx].clickTime > inputConfig[actionItems[gridDevIdx].inputPort].doubleclick
 				)
-			)) {
-			inputDigitals[inputPort].processClick = false;
-			inputDigitals[inputPort].processDoubleclick = false;
-			// Only take bypass actions when criteria has been meat
-			if (bypass) {
-				// Loop actions
-				for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
-					if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort && actionItems[gridDevIdx].mode == ActionMode::click) {
-						execBypass(gridDevIdx);
-					}
+			) {
+				actionItems[gridDevIdx].processClick = false;
+				execBypass(gridDevIdx);
+
+				// Unset marker for action items with double click mode with the same trigger type
+				for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
+					if (actionItems[i].deviceId != 0xFF
+						&& actionItems[i].inputPort == actionItems[gridDevIdx].inputPort
+						&& actionItems[i].trigger == actionItems[gridDevIdx].trigger
+						&& actionItems[i].mode == ActionMode::doubleclick
+					) {
+						actionItems[i].processDoubleclick = false;
+					}	
 				}
 			}
 		}
+	}
 
-		// Bypass actions on longpress
-		for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
-			if (actionItems[gridDevIdx].inputPort == inputPort
-				&& actionItems[gridDevIdx].processLongpress == true
-				&& loopTime - inputDigitals[inputPort].clickTime > actionItems[gridDevIdx].longpress
-			) {
-				canWriteFrame(0xFA, thisDeviceId, 0, 0, 0, actionItems[gridDevIdx].longpress);
-				actionItems[gridDevIdx].processLongpress = false;
-				// Only take bypass actions when criteria has been meat
-				if (bypass) {
-					execBypass(gridDevIdx);
-				}
-			}
+	// Bypass actions on longpress
+	for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+		if (actionItems[gridDevIdx].deviceId != 0xFF
+			&& inputDigitals[actionItems[gridDevIdx].inputPort].bypass
+			&& actionItems[gridDevIdx].processLongpress == true
+			&& actionItems[gridDevIdx].longpress > 0
+			&& actionItems[gridDevIdx].mode == ActionMode::longpress
+			&& (
+				(actionItems[gridDevIdx].trigger == ActionTrigger::rising && inputDigitals[actionItems[gridDevIdx].inputPort].value == HIGH)
+				||
+				(actionItems[gridDevIdx].trigger == ActionTrigger::falling && inputDigitals[actionItems[gridDevIdx].inputPort].value == LOW)
+			) && loopTime - actionItems[gridDevIdx].clickTime > actionItems[gridDevIdx].longpress
+		) {
+			actionItems[gridDevIdx].processLongpress = false;
+			execBypass(gridDevIdx);
 		}
 	}
 
@@ -1002,7 +1041,7 @@ void loop() {
 			if (delays[delayIdx].deviceId == thisDeviceId) {
 				setDigitalOutput(delays[delayIdx].port, delays[delayIdx].type);
 			} else {
-				canWriteFrame(delays[delayIdx].deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::set, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
+				setDigitalOutputRemote(delays[delayIdx].deviceId, delays[delayIdx].port, delays[delayIdx].type);
 			}
 			removeDelay(delays[delayIdx].deviceId, delays[delayIdx].port);
 		}
