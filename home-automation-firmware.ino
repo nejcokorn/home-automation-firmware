@@ -381,6 +381,10 @@ uint32_t saveConfig() {
 		EEPROM.put(EEPROMPointer, actionItems[i]);
 		EEPROMPointer += sizeof(actionItems[i]);
 	}
+
+	// Commit changes
+	EEPROM.commit();
+
 	return EEPROMPointer;
 }
 
@@ -848,6 +852,9 @@ void setup() {
 	for (int pin = 0; pin < 2; pin++) {
 		pinMode(configurationPins[pin], INPUT_PULLUP);
 	}
+
+	// Must call this to read first page
+	EEPROM.begin();
 
 	// Read configuration from EEPROM
 	readConfig();
