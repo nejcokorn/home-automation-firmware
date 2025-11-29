@@ -163,6 +163,18 @@ struct ActionItem {
 	uint64_t clickTime;
 	uint64_t previousClickTime;
 };
+struct ActionItemEEPROM {
+	uint8_t deviceId;
+	uint8_t inputPort;
+	ActionTrigger trigger;
+	ActionType type;
+	ActionMode mode;
+	uint16_t skipWhenDelay;
+	uint16_t clearDelay;
+	uint16_t ports;
+	uint32_t delay;
+	uint32_t longpress;
+};
 
 struct Command {
 	bool isInput;
@@ -377,8 +389,21 @@ uint32_t saveConfig() {
 
 	// Store actions
 	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
-		EEPROM.put(EEPROMPointer, actionItems[i]);
-		EEPROMPointer += sizeof(actionItems[i]);
+		// Only store important properties into EEPROM
+		ActionItemEEPROM actionItemEEPROM;
+		actionItemEEPROM.deviceId      = actionItems[i].deviceId;
+		actionItemEEPROM.inputPort     = actionItems[i].inputPort;
+		actionItemEEPROM.trigger       = actionItems[i].trigger;
+		actionItemEEPROM.type          = actionItems[i].type;
+		actionItemEEPROM.mode          = actionItems[i].mode;
+		actionItemEEPROM.skipWhenDelay = actionItems[i].skipWhenDelay;
+		actionItemEEPROM.clearDelay    = actionItems[i].clearDelay;
+		actionItemEEPROM.ports         = actionItems[i].ports;
+		actionItemEEPROM.delay         = actionItems[i].delay;
+		actionItemEEPROM.longpress     = actionItems[i].longpress;
+
+		EEPROM.put(EEPROMPointer, actionItemEEPROM);
+		EEPROMPointer += sizeof(actionItemEEPROM);
 	}
 
 	// Commit changes
@@ -400,8 +425,21 @@ void readConfig() {
 
 	// Get actions from EEPROM
 	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
-		EEPROM.get(EEPROMPointer, actionItems[i]);
-		EEPROMPointer += sizeof(actionItems[i]);
+		ActionItemEEPROM actionItemEEPROM;
+		EEPROM.get(EEPROMPointer, actionItemEEPROM);
+		EEPROMPointer += sizeof(actionItemEEPROM);
+
+		// Copy ActionItemEEPROM object to ActionItem
+		actionItems[i].deviceId      = actionItemEEPROM.deviceId;
+		actionItems[i].inputPort     = actionItemEEPROM.inputPort;
+		actionItems[i].trigger       = actionItemEEPROM.trigger;
+		actionItems[i].type          = actionItemEEPROM.type;
+		actionItems[i].mode          = actionItemEEPROM.mode;
+		actionItems[i].skipWhenDelay = actionItemEEPROM.skipWhenDelay;
+		actionItems[i].clearDelay    = actionItemEEPROM.clearDelay;
+		actionItems[i].ports         = actionItemEEPROM.ports;
+		actionItems[i].delay         = actionItemEEPROM.delay;
+		actionItems[i].longpress     = actionItemEEPROM.longpress;
 	}
 }
 
