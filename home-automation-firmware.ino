@@ -292,8 +292,8 @@ void setDigitalOutput(uint8_t port, ActionType actionType) {
 			outputDigitals[port].value = value;
 		}
 
-		// Remove all related delays
-		removeDelay(thisDeviceId, port);
+		// Clear all related delays
+		clearDelays(thisDeviceId, port);
 	}
 }
 
@@ -315,7 +315,7 @@ void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
 	}
 }
 
-void removeDelay(uint8_t deviceId, uint8_t port) {
+void clearDelays(uint8_t deviceId, uint8_t port) {
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (delays[delayIdx].deviceId == deviceId && delays[delayIdx].port == port) {
 			delays[delayIdx].active = false;
@@ -323,7 +323,6 @@ void removeDelay(uint8_t deviceId, uint8_t port) {
 			delays[delayIdx].port = 0;
 			delays[delayIdx].type = ActionType::low; 
 			delays[delayIdx].time = 0;
-			return;
 		}
 	}
 }
@@ -465,7 +464,7 @@ void execBypass(uint8_t gridDevIdx) {
 				&& delays[delayIdx].deviceId == actionItems[gridDevIdx].deviceId
 				&& (actionItems[gridDevIdx].clearDelay & (1 << delays[delayIdx].port)) > 0
 			) {
-				removeDelay(delays[delayIdx].deviceId, delays[delayIdx].port);
+				clearDelays(delays[delayIdx].deviceId, delays[delayIdx].port);
 			}
 		}
 	}
@@ -574,7 +573,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 				(isCommand && isSet && isOutput && isDigital && !isAcknowledge && !isError)
 				|| (!isCommand && isGet && isOutput && isDigital)
 			)) {
-			removeDelay(rx.id, port);
+			clearDelays(rx.id, port);
 		}
 		
 		// From here onward - Only reply to the frames intended for this device
@@ -1098,7 +1097,7 @@ void loop() {
 			} else {
 				setDigitalOutputRemote(delays[delayIdx].deviceId, delays[delayIdx].port, delays[delayIdx].type);
 			}
-			removeDelay(delays[delayIdx].deviceId, delays[delayIdx].port);
+			clearDelays(delays[delayIdx].deviceId, delays[delayIdx].port);
 		}
 	}
 }
