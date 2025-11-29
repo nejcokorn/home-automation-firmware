@@ -983,14 +983,25 @@ void loop() {
 							actionItems[gridDevIdx].previousClickTime = actionItems[gridDevIdx].clickTime;
 							actionItems[gridDevIdx].clickTime = loopTime;
 
-							// Set click markers
-							actionItems[gridDevIdx].processClick = true;
-							actionItems[gridDevIdx].processDoubleclick = true;
-
-							// Set longpress markers
-							if (actionItems[gridDevIdx].mode == ActionMode::longpress && actionItems[gridDevIdx].longpress > 0) {
-								actionItems[gridDevIdx].processLongpress = true;
+							// Skip action if delay is set for a specific output
+							bool skipAction = false;
+							for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
+								if (delays[delayIdx].active == true && (actionItems[gridDevIdx].skipWhenDelay & (1 << delays[delayIdx].port)) > 0) {
+									skipAction = true;
+								}
 							}
+
+							if (!skipAction){
+								// Set click markers
+								actionItems[gridDevIdx].processClick = true;
+								actionItems[gridDevIdx].processDoubleclick = true;
+	
+								// Set longpress markers
+								if (actionItems[gridDevIdx].mode == ActionMode::longpress && actionItems[gridDevIdx].longpress > 0) {
+									actionItems[gridDevIdx].processLongpress = true;
+								}
+							}
+							
 						}
 					}
 				}
