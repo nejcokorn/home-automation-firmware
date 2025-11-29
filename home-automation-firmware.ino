@@ -53,19 +53,19 @@ enum class ConfigCtrl: uint8_t {
 
 // Config options
 enum class ConfigOptions: uint8_t {
-	writeEEPROM         = 0x01, // Write all configuration into EEPROM
-	debounce            = 0x02, // Debounce in microseconds
-	doubleclick         = 0x03, // Double-click in milliseconds
-	actions             = 0x04, // Get/Reset all actions
-	actionBase          = 0x05, // Action P1 deviceId (B5), trigger (B6), mode (B7), type (B8)
-	actionPorts         = 0x06, // Action P2 ports (map)
-	actionSkipWhenDelay = 0x07, // Action P3 skip action if delay is present in any of the output ports (map)
-	actionClearDelays   = 0x08, // Action P4 clear all delays on all specified output ports (map)
-	actionDelay         = 0x09, // Action P5 delay in milliseconds
-	actionLongpress     = 0x0A, // Action P6 longpress in milliseconds
-	bypassInstantly     = 0x0B, // Bypass Instantly
-	bypassOnDIPSwitch   = 0x0C, // Bypass determined by DIP switch
-	bypassOnDisconnect  = 0x0D, // Bypass on disconnect in milliseconds
+	writeEEPROM         = 0x00, // Write all configuration into EEPROM
+	debounce            = 0x01, // Debounce in microseconds
+	doubleclick         = 0x02, // Double-click in milliseconds
+	actions             = 0x03, // Get/Reset all actions
+	actionBase          = 0x04, // Action P1 deviceId (B5), trigger (B6), mode (B7), type (B8)
+	actionPorts         = 0x05, // Action P2 ports (map)
+	actionSkipWhenDelay = 0x06, // Action P3 skip action if delay is present in any of the output ports (map)
+	actionClearDelay    = 0x07, // Action P4 clear all delays on all specified output ports (map)
+	actionDelay         = 0x08, // Action P5 delay in milliseconds
+	actionLongpress     = 0x09, // Action P6 longpress in milliseconds
+	bypassInstantly     = 0x0A, // Bypass Instantly
+	bypassOnDIPSwitch   = 0x0B, // Bypass determined by DIP switch
+	bypassOnDisconnect  = 0x0C, // Bypass on disconnect in milliseconds
 };
 
 // Action types
@@ -426,6 +426,14 @@ void updateActionPorts(uint16_t ports) {
 	lastActionItem->ports = ports;
 }
 
+void updateActionSkipWhenDelay(uint16_t ports) {
+	lastActionItem->skipWhenDelay = ports;
+}
+
+void updateActionClearDelay(uint16_t ports) {
+	lastActionItem->clearDelay = ports;
+}
+
 void updateActionDelay(uint32_t delay) {
 	lastActionItem->delay = delay;
 }
@@ -613,6 +621,16 @@ void canProcessFrame(const CAN_message_t& rx) {
 					updateActionPorts(actionPorts);
 					break;
 				}
+				case ConfigOptions::actionSkipWhenDelay: {
+					uint16_t actionPorts = data & 0xFFF;
+					updateActionSkipWhenDelay(actionPorts);
+					break;
+				}
+				case ConfigOptions::actionClearDelay: {
+					uint16_t actionPorts = data & 0xFFF;
+					updateActionClearDelay(actionPorts);
+					break;
+				}
 				case ConfigOptions::actionDelay:
 					updateActionDelay(data);
 					break;
@@ -665,8 +683,24 @@ void canProcessFrame(const CAN_message_t& rx) {
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionPorts,
 								port,
 								actionItems[i].ports);
+
+							// P3 - action skip when delay
+							sendAck(from,
+								thisDeviceId,
+								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionSkipWhenDelay,
+								port,
+								actionItems[i].skipWhenDelay);
+
+							// P4 - clear delays
+							sendAck(from,
+								thisDeviceId,
+								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionClearDelay,
+								port,
+								actionItems[i].clearDelay);
 									
-							// P3 - action delay
+							// P5 - action delay
 							sendAck(from,
 								thisDeviceId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
@@ -674,7 +708,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 								port,
 								actionItems[i].delay);
 							
-							// P4 - action longpress in milliseconds
+							// P6 - action longpress in milliseconds
 							sendAck(from,
 								thisDeviceId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
@@ -966,6 +1000,10 @@ void loop() {
 
 	// Bypass actions on double click
 	for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+		if (actionItems[gridDevIdx].deviceId == 0xFF || !inputDigitals[actionItems[gridDevIdx].inputPort].bypass) {
+			continue;
+		}
+
 		if (actionItems[gridDevIdx].deviceId != 0xFF
 			&& inputDigitals[actionItems[gridDevIdx].inputPort].bypass
 			&& actionItems[gridDevIdx].processDoubleclick == true
@@ -989,10 +1027,8 @@ void loop() {
 				}	
 			}
 		}
-	}
 
-	// Bypass actions on single click
-	for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+		// Bypass actions on single click
 		if (actionItems[gridDevIdx].deviceId != 0xFF
 			&& inputDigitals[actionItems[gridDevIdx].inputPort].bypass
 			&& actionItems[gridDevIdx].processClick == true
@@ -1022,10 +1058,8 @@ void loop() {
 				}
 			}
 		}
-	}
 
-	// Bypass actions on longpress
-	for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+		// Bypass actions on longpress
 		if (actionItems[gridDevIdx].deviceId != 0xFF
 			&& inputDigitals[actionItems[gridDevIdx].inputPort].bypass
 			&& actionItems[gridDevIdx].processLongpress == true
