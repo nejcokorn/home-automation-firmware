@@ -1004,9 +1004,7 @@ void loop() {
 			continue;
 		}
 
-		if (actionItems[gridDevIdx].deviceId != 0xFF
-			&& inputDigitals[actionItems[gridDevIdx].inputPort].bypass
-			&& actionItems[gridDevIdx].processDoubleclick == true
+		if (actionItems[gridDevIdx].processDoubleclick == true
 			&& actionItems[gridDevIdx].mode == ActionMode::doubleclick
 			&& actionItems[gridDevIdx].clickTime - actionItems[gridDevIdx].previousClickTime < inputConfig[actionItems[gridDevIdx].inputPort].doubleclick
 		) {
@@ -1029,9 +1027,7 @@ void loop() {
 		}
 
 		// Bypass actions on single click
-		if (actionItems[gridDevIdx].deviceId != 0xFF
-			&& inputDigitals[actionItems[gridDevIdx].inputPort].bypass
-			&& actionItems[gridDevIdx].processClick == true
+		if (actionItems[gridDevIdx].processClick == true
 			&& actionItems[gridDevIdx].mode == ActionMode::click
 		) { // Only when click needs processing
 			if (inputConfig[actionItems[gridDevIdx].inputPort].doubleclick == 0 // No double click configured - continue to process click
@@ -1060,10 +1056,7 @@ void loop() {
 		}
 
 		// Bypass actions on longpress
-		if (actionItems[gridDevIdx].deviceId != 0xFF
-			&& inputDigitals[actionItems[gridDevIdx].inputPort].bypass
-			&& actionItems[gridDevIdx].processLongpress == true
-			&& actionItems[gridDevIdx].longpress > 0
+		if (actionItems[gridDevIdx].processLongpress == true
 			&& actionItems[gridDevIdx].mode == ActionMode::longpress
 			&& (
 				(actionItems[gridDevIdx].trigger == ActionTrigger::rising && inputDigitals[actionItems[gridDevIdx].inputPort].value == HIGH)
