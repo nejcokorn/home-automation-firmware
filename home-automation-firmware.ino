@@ -60,7 +60,7 @@ enum class ConfigOptions: uint8_t {
 	actionBase          = 0x04, // Action P1 deviceId (B5), trigger (B6), mode (B7), type (B8)
 	actionPorts         = 0x05, // Action P2 ports (map)
 	actionSkipWhenDelay = 0x06, // Action P3 skip action if delay is present in any of the output ports (map)
-	actionClearDelay    = 0x07, // Action P4 clear all delays on all specified output ports (map)
+	actionClearDelays   = 0x07, // Action P4 clear all delays on all specified output ports (map)
 	actionDelay         = 0x08, // Action P5 delay in milliseconds
 	actionLongpress     = 0x09, // Action P6 longpress in milliseconds
 	bypassInstantly     = 0x0A, // Bypass Instantly
@@ -430,7 +430,7 @@ void updateActionSkipWhenDelay(uint16_t ports) {
 	lastActionItem->skipWhenDelay = ports;
 }
 
-void updateActionClearDelay(uint16_t ports) {
+void updateActionClearDelays(uint16_t ports) {
 	lastActionItem->clearDelay = ports;
 }
 
@@ -458,9 +458,20 @@ void resetCommand(Command* execCommand) {
 }
 
 void execBypass(uint8_t gridDevIdx) {
+	// Remove delays
+	if (actionItems[gridDevIdx].clearDelay) {
+		for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
+			if (delays[delayIdx].active == true
+				&& delays[delayIdx].deviceId == actionItems[gridDevIdx].deviceId
+				&& (actionItems[gridDevIdx].clearDelay & (1 << delays[delayIdx].port)) > 0
+			) {
+				removeDelay(delays[delayIdx].deviceId, delays[delayIdx].port);
+			}
+		}
+	}
 	for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
 		if (actionItems[gridDevIdx].ports & (1 << outputPort)) {
-			if (actionItems[gridDevIdx].delay > 0) {	
+			if (actionItems[gridDevIdx].delay > 0) {
 				// Change value of local output port
 				setDelay(actionItems[gridDevIdx].deviceId, outputPort, actionItems[gridDevIdx].type, actionItems[gridDevIdx].delay);
 			} else if (actionItems[gridDevIdx].deviceId == thisDeviceId) {
@@ -626,9 +637,9 @@ void canProcessFrame(const CAN_message_t& rx) {
 					updateActionSkipWhenDelay(actionPorts);
 					break;
 				}
-				case ConfigOptions::actionClearDelay: {
+				case ConfigOptions::actionClearDelays: {
 					uint16_t actionPorts = data & 0xFFF;
-					updateActionClearDelay(actionPorts);
+					updateActionClearDelays(actionPorts);
 					break;
 				}
 				case ConfigOptions::actionDelay:
@@ -696,7 +707,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 							sendAck(from,
 								thisDeviceId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
-								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionClearDelay,
+								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionClearDelays,
 								port,
 								actionItems[i].clearDelay);
 									
@@ -1021,7 +1032,6 @@ void loop() {
 		) {
 			// Unset click markers
 			actionItems[gridDevIdx].processDoubleclick = false;
-			
 			// Only take bypass actions when criteria has been meat
 			execBypass(gridDevIdx);
 
