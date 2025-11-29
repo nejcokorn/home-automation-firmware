@@ -1,4 +1,5 @@
 #include <EEPROM.h>
+#include <IWatchdog.h>
 #include "STM32_CAN.h"
 #include "STM32F103Rx.h"
 
@@ -944,8 +945,12 @@ void setup() {
 
 	// Initialize CAN 
 	Can1.begin();
-	// Can1.setBaudRate(500000);
 	Can1.setBaudRate(canBaudRate);
+
+	// Initialize the IWDG with 5 seconds timeout.
+	// This would cause a CPU reset if the IWDG timer
+	// is not reloaded in approximately 5 seconds.
+	IWatchdog.begin(5000000);
 }
 
 // Loop indefinetely
@@ -1132,4 +1137,7 @@ void loop() {
 			delays[delayIdx].time = 0;
 		}
 	}
+
+	// Reload watchdog timer
+	IWatchdog.reload();
 }
