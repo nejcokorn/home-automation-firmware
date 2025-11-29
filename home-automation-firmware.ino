@@ -303,9 +303,6 @@ void setDigitalOutput(uint8_t port, ActionType actionType) {
 			digitalWrite(outputDigitalPins[port], value);
 			outputDigitals[port].value = value;
 		}
-
-		// Clear all related delays
-		clearDelays(thisDeviceId, port);
 	}
 }
 
@@ -606,14 +603,6 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Only reply to the frames intended for this device
 	if (rx.id != thisDeviceId) {
-		// Remove delays for other devices
-		if (!isConfig && (
-				(isCommand && isSet && isOutput && isDigital && !isAcknowledge && !isError)
-				|| (!isCommand && isGet && isOutput && isDigital)
-			)) {
-			clearDelays(rx.id, port);
-		}
-		
 		// From here onward - Only reply to the frames intended for this device
 		return;
 	}
@@ -1135,7 +1124,12 @@ void loop() {
 			} else {
 				setDigitalOutputRemote(delays[delayIdx].deviceId, delays[delayIdx].port, delays[delayIdx].type);
 			}
-			clearDelays(delays[delayIdx].deviceId, delays[delayIdx].port);
+			// Clear out only this delay
+			delays[delayIdx].active = false;
+			delays[delayIdx].deviceId = 0xFF;
+			delays[delayIdx].port = 0;
+			delays[delayIdx].type = ActionType::low; 
+			delays[delayIdx].time = 0;
 		}
 	}
 }
