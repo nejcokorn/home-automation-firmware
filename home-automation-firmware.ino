@@ -138,6 +138,7 @@ struct OutputDigital {
 OutputDigital outputDigitals[SIZE_OUTPUT_DIGITAL];
 
 struct Delay {
+	uint32_t id;
 	bool active;
 	uint8_t deviceId;
 	uint8_t port;
@@ -213,6 +214,9 @@ uint64_t loopTimeLast = 0;
 
 // Last time in milliseconds
 int32_t lastSyncRemote = 0;
+
+// Last delay id
+uint32_t delayIdSequence = 1;
 
 // State of the DIP switch C_02
 bool dipSwitchBypass = false;
@@ -315,6 +319,7 @@ void setDigitalOutputRemote(uint8_t deviceId, uint8_t port, ActionType actionTyp
 void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (!delays[delayIdx].active) {
+			delays[delayIdx].id = delayIdSequence++;
 			delays[delayIdx].active = true;
 			delays[delayIdx].deviceId = deviceId;
 			delays[delayIdx].port = port;
@@ -799,9 +804,10 @@ void canProcessFrame(const CAN_message_t& rx) {
 			for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 				if (delays[delayIdx].active == true) {
 					dataCtrl = (uint8_t)DataCtrl::listDelays | (uint8_t)DataCtrl::digital | (uint8_t)DataCtrl::output | (uint8_t)DataCtrl::integer;
-					uint32_t delayData = (delays[delayIdx].deviceId << 24) | (uint8_t)delays[delayIdx].type;
-					sendAck(from, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delayData);
-					sendAck(from, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, 0xFF, (delays[delayIdx].time - micros())/1000);
+					sendAck(from, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].id);
+					sendAck(from, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].deviceId);
+					sendAck(from, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
+					sendAck(from, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, (delays[delayIdx].time - micros())/1000);
 				}
 			}
 			// Send last package without wait and empty
@@ -912,6 +918,7 @@ void setup() {
 	// Setup dalays
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		Delay delay{};
+		delay.id       = 0;
 		delay.active   = false;
 		delay.deviceId = 0xFF;
 		delay.port     = 0;
@@ -1130,6 +1137,7 @@ void loop() {
 				setDigitalOutputRemote(delays[delayIdx].deviceId, delays[delayIdx].port, delays[delayIdx].type);
 			}
 			// Clear out only this delay
+			delays[delayIdx].id = 0;
 			delays[delayIdx].active = false;
 			delays[delayIdx].deviceId = 0xFF;
 			delays[delayIdx].port = 0;
