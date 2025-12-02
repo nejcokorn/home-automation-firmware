@@ -110,7 +110,8 @@ enum class ActionMode: uint8_t {
 // CAN setup
 STM32_CAN Can1(CAN_RX, CAN_TX, RX_SIZE_512, TX_SIZE_512);
 
-#define CAN_BCAST_ADDRES 0xFF // broadcast frame receiver
+#define CAN_BCAST_ACTION_ADDRES 0xFF // broadcast frame receiver
+#define CAN_BCAST_INFO_ADDRES 0xFE // broadcast frame receiver
 
 uint32_t firmwareVersion;
 
@@ -149,13 +150,15 @@ struct Delay {
 Delay delays[SIZE_DELAYS];
 
 struct ActionItem {
-	uint8_t deviceId;
 	uint8_t inputPort;
 	ActionTrigger trigger;
 	ActionType type;
 	ActionMode mode;
-	uint16_t skipWhenDelay;
-	uint16_t clearDelay;
+	uint8_t skipWhenDelayDeviceId;
+	uint16_t skipWhenDelayPorts;
+	uint8_t clearDelayDeviceId;
+	uint16_t clearDelayPorts;
+	uint8_t deviceId;
 	uint16_t ports;
 	uint32_t delay;
 	uint32_t longpress;
@@ -167,13 +170,15 @@ struct ActionItem {
 	uint64_t previousClickTime;
 };
 struct ActionItemEEPROM {
-	uint8_t deviceId;
 	uint8_t inputPort;
 	ActionTrigger trigger;
 	ActionType type;
 	ActionMode mode;
-	uint16_t skipWhenDelay;
-	uint16_t clearDelay;
+	uint8_t skipWhenDelayDeviceId;
+	uint16_t skipWhenDelayPorts;
+	uint8_t clearDelayDeviceId;
+	uint16_t clearDelayPorts;
+	uint8_t deviceId;
 	uint16_t ports;
 	uint32_t delay;
 	uint32_t longpress;
@@ -368,21 +373,23 @@ bool clearDelayById(uint id) {
 }
 
 void resetActionItem(uint16_t idx) {
-	actionItems[idx].deviceId           = 0xFF;
-	actionItems[idx].inputPort          = 0xFF;
-	actionItems[idx].trigger            = ActionTrigger::disabled;
-	actionItems[idx].mode               = ActionMode::click;
-	actionItems[idx].type               = ActionType::low;
-	actionItems[idx].skipWhenDelay      = 0;
-	actionItems[idx].clearDelay         = 0;
-	actionItems[idx].ports              = 0;
-	actionItems[idx].delay              = 0;
-	actionItems[idx].longpress          = 0;
-	actionItems[idx].processClick       = false;
-	actionItems[idx].processDoubleclick = false;
-	actionItems[idx].processLongpress   = false;
-	actionItems[idx].clickTime          = 0;
-	actionItems[idx].previousClickTime  = 0;
+	actionItems[idx].deviceId              = 0xFF;
+	actionItems[idx].inputPort             = 0xFF;
+	actionItems[idx].trigger               = ActionTrigger::disabled;
+	actionItems[idx].mode                  = ActionMode::click;
+	actionItems[idx].type                  = ActionType::low;
+	actionItems[idx].skipWhenDelayDeviceId = 0xFF;
+	actionItems[idx].skipWhenDelayPorts    = 0;
+	actionItems[idx].clearDelayDeviceId    = 0xFF;
+	actionItems[idx].clearDelayPorts       = 0;
+	actionItems[idx].ports                 = 0;
+	actionItems[idx].delay                 = 0;
+	actionItems[idx].longpress             = 0;
+	actionItems[idx].processClick          = false;
+	actionItems[idx].processDoubleclick    = false;
+	actionItems[idx].processLongpress      = false;
+	actionItems[idx].clickTime             = 0;
+	actionItems[idx].previousClickTime     = 0;
 }
 
 void resetConfig() {
@@ -419,16 +426,18 @@ uint32_t saveConfig() {
 	for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++){
 		// Only store important properties into EEPROM
 		ActionItemEEPROM actionItemEEPROM;
-		actionItemEEPROM.deviceId      = actionItems[i].deviceId;
-		actionItemEEPROM.inputPort     = actionItems[i].inputPort;
-		actionItemEEPROM.trigger       = actionItems[i].trigger;
-		actionItemEEPROM.type          = actionItems[i].type;
-		actionItemEEPROM.mode          = actionItems[i].mode;
-		actionItemEEPROM.skipWhenDelay = actionItems[i].skipWhenDelay;
-		actionItemEEPROM.clearDelay    = actionItems[i].clearDelay;
-		actionItemEEPROM.ports         = actionItems[i].ports;
-		actionItemEEPROM.delay         = actionItems[i].delay;
-		actionItemEEPROM.longpress     = actionItems[i].longpress;
+		actionItemEEPROM.deviceId              = actionItems[i].deviceId;
+		actionItemEEPROM.inputPort             = actionItems[i].inputPort;
+		actionItemEEPROM.trigger               = actionItems[i].trigger;
+		actionItemEEPROM.type                  = actionItems[i].type;
+		actionItemEEPROM.mode                  = actionItems[i].mode;
+		actionItemEEPROM.skipWhenDelayDeviceId = actionItems[i].skipWhenDelayDeviceId;
+		actionItemEEPROM.skipWhenDelayPorts    = actionItems[i].skipWhenDelayPorts;
+		actionItemEEPROM.clearDelayDeviceId    = actionItems[i].clearDelayDeviceId;
+		actionItemEEPROM.clearDelayPorts       = actionItems[i].clearDelayPorts;
+		actionItemEEPROM.ports                 = actionItems[i].ports;
+		actionItemEEPROM.delay                 = actionItems[i].delay;
+		actionItemEEPROM.longpress             = actionItems[i].longpress;
 
 		EEPROM.put(EEPROMPointer, actionItemEEPROM);
 		EEPROMPointer += sizeof(actionItemEEPROM);
@@ -458,25 +467,26 @@ void readConfig() {
 		EEPROMPointer += sizeof(actionItemEEPROM);
 
 		// Copy ActionItemEEPROM object to ActionItem
-		actionItems[i].deviceId      = actionItemEEPROM.deviceId;
-		actionItems[i].inputPort     = actionItemEEPROM.inputPort;
-		actionItems[i].trigger       = actionItemEEPROM.trigger;
-		actionItems[i].type          = actionItemEEPROM.type;
-		actionItems[i].mode          = actionItemEEPROM.mode;
-		actionItems[i].skipWhenDelay = actionItemEEPROM.skipWhenDelay;
-		actionItems[i].clearDelay    = actionItemEEPROM.clearDelay;
-		actionItems[i].ports         = actionItemEEPROM.ports;
-		actionItems[i].delay         = actionItemEEPROM.delay;
-		actionItems[i].longpress     = actionItemEEPROM.longpress;
+		actionItems[i].deviceId              = actionItemEEPROM.deviceId;
+		actionItems[i].inputPort             = actionItemEEPROM.inputPort;
+		actionItems[i].trigger               = actionItemEEPROM.trigger;
+		actionItems[i].type                  = actionItemEEPROM.type;
+		actionItems[i].mode                  = actionItemEEPROM.mode;
+		actionItems[i].skipWhenDelayDeviceId = actionItemEEPROM.skipWhenDelayDeviceId;
+		actionItems[i].skipWhenDelayPorts    = actionItemEEPROM.skipWhenDelayPorts;
+		actionItems[i].clearDelayDeviceId    = actionItemEEPROM.clearDelayDeviceId;
+		actionItems[i].clearDelayPorts       = actionItemEEPROM.clearDelayPorts;
+		actionItems[i].ports                 = actionItemEEPROM.ports;
+		actionItems[i].delay                 = actionItemEEPROM.delay;
+		actionItems[i].longpress             = actionItemEEPROM.longpress;
 	}
 }
 
-void updateActionItem(uint8_t deviceId, uint8_t inputPort, ActionTrigger trigger, ActionMode mode, ActionType type) {
+void updateActionItem(uint8_t inputPort, ActionTrigger trigger, ActionMode mode, ActionType type) {
 	// Add mapping if ports for device are defined
 	for (uint16_t idx = 0; idx < SIZE_ACTION_MAP; idx++) {
 		if (actionItems[idx].deviceId == 0xFF) {
 			resetActionItem(idx);
-			actionItems[idx].deviceId = deviceId;
 			actionItems[idx].inputPort = inputPort;
 			actionItems[idx].trigger = trigger;
 			actionItems[idx].mode = mode;
@@ -487,16 +497,19 @@ void updateActionItem(uint8_t deviceId, uint8_t inputPort, ActionTrigger trigger
 	}
 }
 
-void updateActionPorts(uint16_t ports) {
+void updateActionPorts(uint8_t deviceId, uint16_t ports) {
+	lastActionItem->deviceId = deviceId;
 	lastActionItem->ports = ports;
 }
 
-void updateActionSkipWhenDelay(uint16_t ports) {
-	lastActionItem->skipWhenDelay = ports;
+void updateActionSkipWhenDelay(uint8_t deviceId, uint16_t ports) {
+	lastActionItem->skipWhenDelayDeviceId = deviceId;
+	lastActionItem->skipWhenDelayPorts = ports;
 }
 
-void updateActionClearDelays(uint16_t ports) {
-	lastActionItem->clearDelay = ports;
+void updateActionClearDelays(uint8_t deviceId, uint16_t ports) {
+	lastActionItem->clearDelayDeviceId = deviceId;
+	lastActionItem->clearDelayPorts = ports;
 }
 
 void updateActionDelay(uint32_t delay) {
@@ -524,10 +537,10 @@ void resetCommand(Command* execCommand) {
 
 void execBypass(uint8_t gridDevIdx) {
 	// Remove delays
-	if (actionItems[gridDevIdx].clearDelay) {
+	if (actionItems[gridDevIdx].clearDelayPorts) {
 		for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
-			if ((actionItems[gridDevIdx].clearDelay & (1 << outputPort)) > 0) {
-				clearDelays(actionItems[gridDevIdx].deviceId, outputPort, true);
+			if ((actionItems[gridDevIdx].clearDelayPorts & (1 << outputPort)) > 0) {
+				clearDelays(actionItems[gridDevIdx].clearDelayDeviceId, outputPort, true);
 			}
 			
 		}
@@ -596,7 +609,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Do not answer. Acknowledge sent from another device
 			return;
 		}
-		if (rx.id != CAN_BCAST_ADDRES) {
+		if (rx.id != CAN_BCAST_ACTION_ADDRES) {
 			// Frame has to be sent to broadcast address
 			return;
 		}
@@ -616,7 +629,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Do not answer. Acknowledge sent from another device
 			return;
 		}
-		if (!(rx.id == thisDeviceId || rx.id == CAN_BCAST_ADDRES)) {
+		if (!(rx.id == thisDeviceId || rx.id == CAN_BCAST_ACTION_ADDRES)) {
 			// Frame has to be sent to broadcast address or device address
 			return;
 		}
@@ -670,26 +683,28 @@ void canProcessFrame(const CAN_message_t& rx) {
 					}
 					break;
 				case ConfigOptions::actionBase: {
-					uint8_t actionDeviceId = data >> 24;
 					ActionTrigger trigger = (ActionTrigger)((data >> 16) & 0xFF);
 					ActionMode mode = (ActionMode)((data >> 8) & 0xFF);
 					ActionType type = (ActionType)(data & 0xFF);
-					updateActionItem(actionDeviceId, port, trigger, mode, type);
+					updateActionItem(port, trigger, mode, type);
 					break;
 				}
 				case ConfigOptions::actionPorts: {
+					uint8_t actionDeviceId = data >> 24;
 					uint16_t actionPorts = data & 0xFFF;
-					updateActionPorts(actionPorts);
+					updateActionPorts(actionDeviceId, actionPorts);
 					break;
 				}
 				case ConfigOptions::actionSkipWhenDelay: {
+					uint16_t actionDeviceId = data >> 24;
 					uint16_t actionPorts = data & 0xFFF;
-					updateActionSkipWhenDelay(actionPorts);
+					updateActionSkipWhenDelay(actionDeviceId, actionPorts);
 					break;
 				}
 				case ConfigOptions::actionClearDelays: {
+					uint8_t actionDeviceId = data >> 24;
 					uint16_t actionPorts = data & 0xFFF;
-					updateActionClearDelays(actionPorts);
+					updateActionClearDelays(actionDeviceId, actionPorts);
 					break;
 				}
 				case ConfigOptions::actionDelay:
@@ -728,7 +743,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 					// Send configurations for output ports related to all devices on grid
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionItems[i].inputPort == port) {
-							confData = actionItems[i].deviceId << 24 | ((uint8_t)actionItems[i].trigger) << 16 | ((uint8_t)actionItems[i].mode) << 8 | (uint8_t)actionItems[i].type;
+							confData = ((uint8_t)actionItems[i].trigger) << 16 | ((uint8_t)actionItems[i].mode) << 8 | (uint8_t)actionItems[i].type;
 							// P1 - action base
 							sendAck(from,
 								thisDeviceId,
@@ -743,7 +758,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionPorts,
 								port,
-								actionItems[i].ports);
+								(actionItems[i].deviceId << 24) | actionItems[i].ports);
 
 							// P3 - action skip when delay
 							sendAck(from,
@@ -751,7 +766,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionSkipWhenDelay,
 								port,
-								actionItems[i].skipWhenDelay);
+								(actionItems[i].skipWhenDelayDeviceId << 24) | actionItems[i].skipWhenDelayPorts);
 
 							// P4 - clear delays
 							sendAck(from,
@@ -759,7 +774,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionClearDelays,
 								port,
-								actionItems[i].clearDelay);
+								(actionItems[i].clearDelayDeviceId << 24) | actionItems[i].clearDelayPorts);
 									
 							// P5 - action delay
 							sendAck(from,
@@ -1080,9 +1095,10 @@ void loop() {
 							bool skipAction = false;
 							for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 								if (delays[delayIdx].active == true
-									&& actionItems[gridDevIdx].deviceId == delays[delayIdx].deviceId
-									&& (actionItems[gridDevIdx].skipWhenDelay & (1 << delays[delayIdx].port)) > 0) {
+									&& actionItems[gridDevIdx].skipWhenDelayDeviceId == delays[delayIdx].deviceId
+									&& (actionItems[gridDevIdx].skipWhenDelayPorts & (1 << delays[delayIdx].port)) > 0) {
 									skipAction = true;
+									break;
 								}
 							}
 
