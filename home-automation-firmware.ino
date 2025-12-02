@@ -31,6 +31,7 @@ enum class DataCtrl: uint8_t {
 	extra         = 0x20,
 	delay         = 0x30,
 	listDelays    = 0x40,
+	clearDelay    = 0x50,
 	digital       = 0x00,
 	analog        = 0x08,
 	input         = 0x04,
@@ -330,9 +331,10 @@ void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
 	}
 }
 
-void clearDelays(uint8_t deviceId, uint8_t port) {
+void clearDelays(uint8_t deviceId, uint8_t port, bool broadcast = false) {
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (delays[delayIdx].deviceId == deviceId && delays[delayIdx].port == port) {
+			delays[delayIdx].id = 0;
 			delays[delayIdx].active = false;
 			delays[delayIdx].deviceId = 0xFF;
 			delays[delayIdx].port = 0;
@@ -340,6 +342,29 @@ void clearDelays(uint8_t deviceId, uint8_t port) {
 			delays[delayIdx].time = 0;
 		}
 	}
+
+	// Ask other devices to clear delays - infinite loop!!!
+	if (broadcast) {
+		uint8_t commCtrl = (uint8_t)CommunicationCtrl::empty;
+		uint8_t dataCtrl = (uint8_t)DataCtrl::output | (uint8_t)DataCtrl::clearDelay;
+		// Push to a broadcast address
+		canWriteFrame(0xFF, thisDeviceId, commCtrl, dataCtrl, port, deviceId);
+	}
+}
+
+bool clearDelayById(uint id) {
+	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
+		if (delays[delayIdx].id == id && delays[delayIdx].active) {
+			delays[delayIdx].id = 0;
+			delays[delayIdx].active = false;
+			delays[delayIdx].deviceId = 0xFF;
+			delays[delayIdx].port = 0;
+			delays[delayIdx].type = ActionType::low; 
+			delays[delayIdx].time = 0;
+			return true;
+		}
+	}
+	return false;
 }
 
 void resetActionItem(uint16_t idx) {
@@ -500,13 +525,11 @@ void resetCommand(Command* execCommand) {
 void execBypass(uint8_t gridDevIdx) {
 	// Remove delays
 	if (actionItems[gridDevIdx].clearDelay) {
-		for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
-			if (delays[delayIdx].active == true
-				&& delays[delayIdx].deviceId == actionItems[gridDevIdx].deviceId
-				&& (actionItems[gridDevIdx].clearDelay & (1 << delays[delayIdx].port)) > 0
-			) {
-				clearDelays(delays[delayIdx].deviceId, delays[delayIdx].port);
+		for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
+			if ((actionItems[gridDevIdx].clearDelay & (1 << outputPort)) > 0) {
+				clearDelays(actionItems[gridDevIdx].deviceId, outputPort, true);
 			}
+			
 		}
 	}
 	for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
@@ -550,6 +573,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 	bool isSet        = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::set;
 	bool isDelay      = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::delay;
 	bool isListDelays = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::listDelays;
+	bool isClearDelay = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::clearDelay;
 	bool isExtra      = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::extra;
 	bool isAnalog     = (dataCtrl & (uint8_t)DataCtrl::signalBit) == (uint8_t)DataCtrl::analog;
 	bool isDigital    = (dataCtrl & (uint8_t)DataCtrl::signalBit) == (uint8_t)DataCtrl::digital;
@@ -607,14 +631,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 		return;
 	}	
 
-	// Only reply to the frames intended for this device
-	if (rx.id != thisDeviceId) {
-		// From here onward - Only reply to the frames intended for this device
-		return;
-	}
-
 	// Config
-	if (isConfig) {
+	if (isConfig && rx.id == thisDeviceId) {
 		// Validate communication byte
 		if (!isCommand || isError) {
 			sendError(from, thisDeviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
@@ -788,6 +806,32 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Command - data operation
 	if (isCommand) {
+		// This action could be broadcasted as well
+		if (isClearDelay) {
+			// List all delays
+			bool delayCleard = false;
+			if (port == 0xFF) {
+				delayCleard = clearDelayById(data);
+			} else {
+				clearDelays(data, port);
+				delayCleard = true;
+			}
+
+			// Respond to requester
+			if (delayCleard) {
+				sendAck(from, thisDeviceId, commCtrl, dataCtrl, port, delayCleard);
+			} else {
+				sendError(from, thisDeviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
+			}
+			return;
+		}
+
+		// Only reply to the frames intended for this device
+		if (rx.id != thisDeviceId) {
+			// From here onward - Only reply to the frames intended for this device
+			return;
+		}
+
 		if (isGet) {
 			// Send back digital input/output value
 			if (isBit || isByte || isInteger) {
@@ -1035,7 +1079,9 @@ void loop() {
 							// Skip action if delay is set for a specific output
 							bool skipAction = false;
 							for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
-								if (delays[delayIdx].active == true && (actionItems[gridDevIdx].skipWhenDelay & (1 << delays[delayIdx].port)) > 0) {
+								if (delays[delayIdx].active == true
+									&& actionItems[gridDevIdx].deviceId == delays[delayIdx].deviceId
+									&& (actionItems[gridDevIdx].skipWhenDelay & (1 << delays[delayIdx].port)) > 0) {
 									skipAction = true;
 								}
 							}
@@ -1137,12 +1183,7 @@ void loop() {
 				setDigitalOutputRemote(delays[delayIdx].deviceId, delays[delayIdx].port, delays[delayIdx].type);
 			}
 			// Clear out only this delay
-			delays[delayIdx].id = 0;
-			delays[delayIdx].active = false;
-			delays[delayIdx].deviceId = 0xFF;
-			delays[delayIdx].port = 0;
-			delays[delayIdx].type = ActionType::low; 
-			delays[delayIdx].time = 0;
+			clearDelayById(delays[delayIdx].id);
 		}
 	}
 
