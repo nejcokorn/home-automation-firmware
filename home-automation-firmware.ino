@@ -1,4 +1,4 @@
-#include <EEPROM.h>
+#include <FlashEEPROM.h>
 #include <IWatchdog.h>
 #include "STM32_CAN.h"
 #include "STM32F103Rx.h"
