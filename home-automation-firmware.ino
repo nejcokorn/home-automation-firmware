@@ -98,6 +98,7 @@ enum class ActionMode: uint8_t {
 #define SIZE_OUTPUT_DIGITAL  12
 #define SIZE_ACTION_MAP      256
 #define SIZE_DELAYS          128
+#define SIZE_COMMANDS        128
 
 // Error codes (packed in Data on error/ack)
 #define ERR_UNKNOWN               0x00000001UL
@@ -185,6 +186,10 @@ struct ActionItemEEPROM {
 };
 
 struct Command {
+	bool active;
+	uint32_t uniquePackageId;
+	uint32_t commandTime;
+	// Command properties
 	bool isInput;
 	bool isOutput;
 	bool isGet;
@@ -213,7 +218,7 @@ struct ConfigRegister {
 ConfigRegister inputConfig[SIZE_INPUT_DIGITAL];
 ActionItem actionItems[SIZE_ACTION_MAP];
 ActionItem* tempActionItem = nullptr;
-Command execCommand;
+Command commands[SIZE_COMMANDS];
 
 // Global variables
 uint64_t loopTimeLast = 0;
@@ -532,19 +537,63 @@ void updateActionLongpress(uint32_t longpress) {
 	tempActionItem->longpress = longpress;
 }
 
-void resetCommand(Command* execCommand) {
-	execCommand->isSet     = false;
-	execCommand->isDigital = false;
-	execCommand->isAnalog  = false;
-	execCommand->isOutput  = false;
-	execCommand->isBit     = false;
-	execCommand->isByte    = false;
-	execCommand->isInteger = false;
-	execCommand->isDecimal = false;
-	execCommand->port      = 0xFF;
-	execCommand->type      = ActionType::low;
-	execCommand->delay     = 0;
-	execCommand->extra     = 0;
+Command& getCommand(uint32_t uniquePackageId){
+	// Check for existing command
+	for (uint8_t commandIdx = 0; commandIdx < SIZE_COMMANDS; commandIdx++) {
+		if (commands[commandIdx].active == true && commands[commandIdx].uniquePackageId == uniquePackageId) {
+			commands[commandIdx].commandTime = millis();
+			return commands[commandIdx];
+		}
+	}
+	
+	// Reserve a slot in the stack of commands
+	for (uint8_t commandIdx = 0; commandIdx < SIZE_COMMANDS; commandIdx++) {
+		if (commands[commandIdx].active == false) {
+			commands[commandIdx].commandTime = millis();
+			commands[commandIdx].uniquePackageId = uniquePackageId;
+			commands[commandIdx].active = true;
+			return commands[commandIdx];
+		}
+	}
+
+	// Override oldest command
+	uint8_t oldestIdx = 0;
+	for (uint8_t commandIdx = 0; commandIdx < SIZE_COMMANDS; commandIdx++) {
+		if (commands[commandIdx].commandTime < commands[oldestIdx].commandTime) {
+			oldestIdx = commandIdx;
+		}
+	}
+	commands[oldestIdx].commandTime = millis();
+	commands[oldestIdx].uniquePackageId = uniquePackageId;
+	commands[oldestIdx].active = true;
+	return commands[oldestIdx];
+}
+
+void removeCommand(Command& command) {
+	command.uniquePackageId = 0;
+	command.commandTime     = 0;
+	command.active          = false;
+	command.isSet           = false;
+	command.isDigital       = false;
+	command.isAnalog        = false;
+	command.isOutput        = false;
+	command.isBit           = false;
+	command.isByte          = false;
+	command.isInteger       = false;
+	command.isDecimal       = false;
+	command.port            = 0xFF;
+	command.type            = ActionType::low;
+	command.delay           = 0;
+	command.extra           = 0;
+}
+
+void maintainCommands() {
+	// Commands older than 0.5 sec should be removed
+	for (uint8_t commandIdx = 0; commandIdx < SIZE_COMMANDS; commandIdx++) {
+		if (millis() - commands[commandIdx].commandTime > 500) {
+			removeCommand(commands[commandIdx]);
+		}
+	}
 }
 
 void execBypass(uint8_t gridDevIdx) {
@@ -904,45 +953,46 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		// Set command
+		Command& command = getCommand(uniquePackageId);
 		if (isSet){
-			execCommand.isSet = isSet;
-			execCommand.isDigital = isDigital;
-			execCommand.isAnalog = isAnalog;
-			execCommand.isOutput = isOutput;
-			execCommand.isBit = isBit;
-			execCommand.isByte = isByte;
-			execCommand.isInteger = isInteger;
-			execCommand.isDecimal = isDecimal;
-			execCommand.port = port;
-			execCommand.type = (ActionType)data;
+			command.isSet = isSet;
+			command.isDigital = isDigital;
+			command.isAnalog = isAnalog;
+			command.isOutput = isOutput;
+			command.isBit = isBit;
+			command.isByte = isByte;
+			command.isInteger = isInteger;
+			command.isDecimal = isDecimal;
+			command.port = port;
+			command.type = (ActionType)data;
 		} else if (isDelay) {
-			// It has to match on port, digital/analog, input/output otherwise reset
-			if (port != execCommand.port || isDigital != execCommand.isDigital || isOutput != execCommand.isOutput) {
-				resetCommand(&execCommand);
+			// Command has to match on port, digital/analog, input/output otherwise remove command
+			if (port != command.port || isDigital != command.isDigital || isOutput != command.isOutput) {
+				removeCommand(command);
 				sendError(uniquePackageId, from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 				return;
 			}
-			execCommand.delay = data;
+			command.delay = data;
 		} else if (isExtra) {
-			// It has to match on port, digital/analog, input/output otherwise reset
-			if (port != execCommand.port || isDigital != execCommand.isDigital || isOutput != execCommand.isOutput) {
-				resetCommand(&execCommand);
+			// Command has to match on port, digital/analog, input/output otherwise remove command
+			if (port != command.port || isDigital != command.isDigital || isOutput != command.isOutput) {
+				removeCommand(command);
 				sendError(uniquePackageId, from, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 				return;
 			}
 			// Future use
-			execCommand.extra = data;
+			command.extra = data;
 		}
 		
 		// Execute command when no other data is expected
-		if (!isWait && execCommand.isSet) {
-			if (execCommand.delay > 0) {
-				setDelay(thisDeviceId, execCommand.port, execCommand.type, execCommand.delay);
+		if (!isWait && command.isSet) {
+			if (command.delay > 0) {
+				setDelay(thisDeviceId, command.port, command.type, command.delay);
 			} else {
 				// Set output value, for now this covers all dataTypes except decimals
-				if (execCommand.isBit || execCommand.isByte || execCommand.isInteger) {
+				if (command.isBit || command.isByte || command.isInteger) {
 					// Write new value to output port
-					setDigitalOutput(execCommand.port, (ActionType)data);
+					setDigitalOutput(command.port, (ActionType)data);
 				} else {
 					sendError(uniquePackageId, from, thisDeviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
 					return;
@@ -951,8 +1001,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Send back current outputDigital value
 			sendAck(uniquePackageId, from, thisDeviceId, commCtrl, (uint8_t)DataCtrl::set, port, outputDigitals[port].value);
 
-			// Reset execCommand properties
-			resetCommand(&execCommand);
+			// Reset command properties
+			removeCommand(command);
 		}
 		return;
 	}
@@ -1228,4 +1278,7 @@ void loop() {
 
 	// Reload watchdog timer
 	IWatchdog.reload();
+
+	// Maintain commands
+	maintainCommands();
 }
