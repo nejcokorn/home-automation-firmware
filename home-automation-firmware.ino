@@ -144,6 +144,7 @@ OutputDigital outputDigitals[SIZE_OUTPUT_DIGITAL];
 struct Delay {
 	uint32_t id;
 	bool active;
+	bool execute;
 	uint8_t deviceId;
 	uint8_t port;
 	ActionType type;
@@ -346,6 +347,7 @@ void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
 		if (!delays[delayIdx].active) {
 			delays[delayIdx].id = delayIdSequence++;
 			delays[delayIdx].active = true;
+			delays[delayIdx].execute = true;
 			delays[delayIdx].deviceId = deviceId;
 			delays[delayIdx].port = port;
 			delays[delayIdx].type = type;
@@ -360,6 +362,7 @@ void clearDelays(uint8_t deviceId, uint8_t port) {
 		if (delays[delayIdx].deviceId == deviceId && delays[delayIdx].port == port) {
 			delays[delayIdx].id = 0;
 			delays[delayIdx].active = false;
+			delays[delayIdx].execute = false;
 			delays[delayIdx].deviceId = 0xFF;
 			delays[delayIdx].port = 0;
 			delays[delayIdx].type = ActionType::low; 
@@ -373,6 +376,7 @@ bool clearDelayById(uint8_t deviceId, uint id) {
 		if (delays[delayIdx].deviceId == deviceId && delays[delayIdx].id == id && delays[delayIdx].active) {
 			delays[delayIdx].id = 0;
 			delays[delayIdx].active = false;
+			delays[delayIdx].execute = false;
 			delays[delayIdx].deviceId = 0xFF;
 			delays[delayIdx].port = 0;
 			delays[delayIdx].type = ActionType::low; 
@@ -652,6 +656,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 	bool isAcknowledge = (commCtrl & (uint8_t)CommunicationCtrl::acknowledgeBit) == (uint8_t)CommunicationCtrl::acknowledgeBit;
 	bool isWait        = (commCtrl & (uint8_t)CommunicationCtrl::waitBit) == (uint8_t)CommunicationCtrl::waitBit;
 	bool isError       = (commCtrl & (uint8_t)CommunicationCtrl::errorBit) == (uint8_t)CommunicationCtrl::errorBit;
+	bool isNotify      = (commCtrl & (uint8_t)CommunicationCtrl::notifyBit) == (uint8_t)CommunicationCtrl::notifyBit;
 	
 	// Data control parameters
 	bool isGet        = (dataCtrl & (uint8_t)DataCtrl::operationBits) == (uint8_t)DataCtrl::get;
@@ -947,6 +952,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 						dataCtrl = (uint8_t)DataCtrl::listDelays | (uint8_t)DataCtrl::digital | (uint8_t)DataCtrl::output | (uint8_t)DataCtrl::integer;
 						sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].id);
 						sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].deviceId);
+						sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].execute == true ? 1 : 0);
 						sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
 						sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, (delays[delayIdx].time - micros())/1000);
 					}
@@ -1076,6 +1082,7 @@ void setup() {
 		Delay delay{};
 		delay.id       = 0;
 		delay.active   = false;
+		delay.execute   = false;
 		delay.deviceId = 0xFF;
 		delay.port     = 0;
 		delay.type     = ActionType::low;
@@ -1191,7 +1198,7 @@ void loop() {
 							// Skip action if delay is set for a specific output
 							bool skipAction = false;
 							for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
-								if (delays[delayIdx].active == true
+								if (delays[delayIdx].active == true && delays[delayIdx].execute == true
 									&& actionItems[gridDevIdx].skipWhenDelayDeviceId == delays[delayIdx].deviceId
 									&& (actionItems[gridDevIdx].skipWhenDelayPorts & (1 << delays[delayIdx].port)) > 0) {
 									skipAction = true;
