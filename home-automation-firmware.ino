@@ -266,8 +266,8 @@ static inline uint32_t nextPackageId() {
 // Send CAN frame
 void canWriteFrame(uint32_t packageId, uint16_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uint8_t port, uint32_t data) {
 	CAN_message_t tx{};
-	tx.flags.extended = 1;  // To enable extended ID.
-	tx.id  = packageId << 2 | to;
+	tx.flags.extended = 1;  // Enable extended ID.
+	tx.id  = (packageId << 8) | to;
 	tx.len = 8;
 
 	tx.buf[0] = from;             // B1 From
@@ -341,7 +341,7 @@ void setDigitalOutputRemote(uint8_t deviceId, uint8_t port, ActionType actionTyp
 	canWriteFrame(nextPackageId(), deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::set, port, (uint8_t)actionType);
 }
 
-void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
+void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay, bool notify = false) {
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (!delays[delayIdx].active) {
 			delays[delayIdx].id = delayIdSequence++;
@@ -350,12 +350,21 @@ void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
 			delays[delayIdx].port = port;
 			delays[delayIdx].type = type;
 			delays[delayIdx].time = micros() + delay * 1000;
-			return;
+			break;
 		}
+	}
+	// Ask other devices to set the delay
+	if (notify) {
+		uint8_t commCtrl = (uint8_t)CommunicationCtrl::commandBit | (uint8_t)CommunicationCtrl::notifyBit;
+		uint8_t dataCtrl = (uint8_t)DataCtrl::output;
+		// Send Notify package to others
+		uint32_t delayPackageId = nextPackageId();
+		canWriteFrame(delayPackageId, deviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl | (uint8_t)DataCtrl::set, port, (uint8_t)type);
+		canWriteFrame(delayPackageId, deviceId, thisDeviceId, commCtrl, dataCtrl | (uint8_t)DataCtrl::delay, port, delay);
 	}
 }
 
-void clearDelays(uint8_t deviceId, uint8_t port, bool broadcast = false) {
+void clearDelays(uint8_t deviceId, uint8_t port, bool notify = false) {
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (delays[delayIdx].deviceId == deviceId && delays[delayIdx].port == port) {
 			delays[delayIdx].id = 0;
@@ -367,12 +376,12 @@ void clearDelays(uint8_t deviceId, uint8_t port, bool broadcast = false) {
 		}
 	}
 
-	// Ask other devices to clear delays - infinite loop!!!
-	if (broadcast) {
-		uint8_t commCtrl = (uint8_t)CommunicationCtrl::empty;
+	// Ask other devices to clear the delay
+	if (notify) {
+		uint8_t commCtrl = (uint8_t)CommunicationCtrl::commandBit | (uint8_t)CommunicationCtrl::notifyBit;
 		uint8_t dataCtrl = (uint8_t)DataCtrl::output | (uint8_t)DataCtrl::clearDelay;
-		// Push to a broadcast address
-		canWriteFrame(nextPackageId(), 0xFF, thisDeviceId, commCtrl, dataCtrl, port, deviceId);
+		// Send Notify package to others
+		canWriteFrame(nextPackageId(), deviceId, thisDeviceId, commCtrl, dataCtrl, port, 0);
 	}
 }
 
@@ -603,8 +612,6 @@ void execBypass(uint8_t gridDevIdx) {
 		for (uint8_t outputPort = 0; outputPort < SIZE_OUTPUT_DIGITAL; outputPort++) {
 			if ((actionItems[gridDevIdx].clearDelayPorts & (1 << outputPort)) > 0) {
 				clearDelays(actionItems[gridDevIdx].clearDelayDeviceId, outputPort, true);
-				// Send Notify package to others
-				canWriteFrame(nextPackageId(), actionItems[gridDevIdx].clearDelayDeviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit | (uint8_t)CommunicationCtrl::notifyBit, (uint8_t)DataCtrl::clearDelay, outputPort, 0);
 			}
 		}
 	}
@@ -612,7 +619,7 @@ void execBypass(uint8_t gridDevIdx) {
 		if (actionItems[gridDevIdx].ports & (1 << outputPort)) {
 			if (actionItems[gridDevIdx].delay > 0) {
 				// Change value of local output port
-				setDelay(actionItems[gridDevIdx].deviceId, outputPort, actionItems[gridDevIdx].type, actionItems[gridDevIdx].delay);
+				setDelay(actionItems[gridDevIdx].deviceId, outputPort, actionItems[gridDevIdx].type, actionItems[gridDevIdx].delay, true);
 				// TODO sent package to notify other defices about the delay
 			} else if (actionItems[gridDevIdx].deviceId == thisDeviceId) {
 				// Change value of local output port
@@ -631,7 +638,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Unpack CAN Identifier
 	uint8_t targetDeviceId   = rx.id & 0xff;
-	uint32_t packageId       = rx.id >> 2;
+	uint32_t packageId       = rx.id >> 8;
 	uint32_t uniquePackageId = (rx.id & 0x1FFFFF00) | rx.buf[0]; // Unique package id is constructed of the sender package id and the id of the sender
 
 	// Unpack CAN Payload
