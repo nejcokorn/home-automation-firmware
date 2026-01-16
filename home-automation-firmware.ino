@@ -99,7 +99,7 @@ enum class ActionMode: uint8_t {
 #define SIZE_OUTPUT_DIGITAL  12
 #define SIZE_ACTION_MAP      256
 #define SIZE_DELAYS          128
-#define SIZE_COMMANDS        128
+#define SIZE_COMMANDS        64
 
 // Error codes (packed in Data on error/ack)
 #define ERR_UNKNOWN               0x00000001UL
@@ -110,10 +110,12 @@ enum class ActionMode: uint8_t {
 #define ERR_WRONG_ADDRESS         0x00000006UL
 
 // CAN setup
-STM32_CAN Can1(CAN_RX, CAN_TX, RX_SIZE_512, TX_SIZE_512);
+STM32_CAN Can1(CAN_RX, CAN_TX, RX_SIZE_256, TX_SIZE_256);
 
-#define CAN_BCAST_ACTION_ADDRES 0xFF // broadcast frame receiver
-#define CAN_BCAST_INFO_ADDRES 0xFE // broadcast frame receiver
+#define CAN_BROADCAST_ADDRES 0xFF // broadcast frame receiver
+
+// Maximum lifetime of a command before the command is deleted
+#define COMMAND_MAX_AGE 500
 
 uint32_t firmwareVersion;
 
@@ -189,7 +191,7 @@ struct ActionItemEEPROM {
 
 struct Command {
 	bool active;
-	uint32_t uniquePackageId;
+	uint32_t packageId;
 	uint32_t commandTime;
 	// Command properties
 	bool isInput;
@@ -236,7 +238,7 @@ uint32_t delayIdSequence = 1;
 bool dipSwitchBypass = false;
 
 // Device package sequence
-uint32_t packageIdSequence = 1;
+uint32_t commandIdSequence = 0;
 
 // Helpers to pack 32-bit data (MSB..LSB)
 static inline void u32ToBytes(uint32_t source, uint8_t* target) {
@@ -257,21 +259,23 @@ static inline uint8_t computeDeviceAddress() {
 	return id;
 }
 
-static inline uint32_t nextPackageId() {
-	if (packageIdSequence > 0x1FFFFF) {
-		packageIdSequence == 1;
+static inline uint32_t nextPackageId(uint8_t initiatorId, uint8_t responderId) {
+	if (commandIdSequence > 0x1FFF) {
+		commandIdSequence == 0;
 	}
-	return packageIdSequence++;
+	uint32_t packageId = commandIdSequence << 16 | initiatorId << 8 | responderId;
+	commandIdSequence++;
+	return packageId;
 }
 
 // Send CAN frame
-void canWriteFrame(uint32_t packageId, uint16_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uint8_t port, uint32_t data) {
+void canWriteFrame(uint32_t packageId, uint8_t commCtrl, uint8_t dataCtrl, uint8_t port, uint32_t data) {
 	CAN_message_t tx{};
 	tx.flags.extended = 1;  // Enable extended ID.
-	tx.id  = (packageId << 8) | to;
+	tx.id  = packageId;
 	tx.len = 8;
 
-	tx.buf[0] = from;             // B1 From
+	tx.buf[0] = 0;                // B1 TODO Shift
 	tx.buf[1] = commCtrl;         // B2 CommCtrl
 	tx.buf[2] = dataCtrl;         // B3 DataCtrl
 	tx.buf[3] = port;             // B4 Port
@@ -281,12 +285,10 @@ void canWriteFrame(uint32_t packageId, uint16_t to, uint8_t from, uint8_t commCt
 }
 
 // Send acknowledge frame
-void sendAck(uint32_t packageId, uint8_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uint8_t port, uint32_t data) {
+void sendAck(uint32_t packageId, uint8_t commCtrl, uint8_t dataCtrl, uint8_t port, uint32_t data) {
 	// Set acknowledgeBit, ensure no errorBit
 	canWriteFrame(
 		packageId,
-		to,
-		from,
 		(commCtrl | (uint8_t)CommunicationCtrl::acknowledgeBit) & ~(uint8_t)CommunicationCtrl::errorBit,
 		dataCtrl,
 		port,
@@ -294,12 +296,10 @@ void sendAck(uint32_t packageId, uint8_t to, uint8_t from, uint8_t commCtrl, uin
 }
 
 // Send error frame
-void sendError(uint32_t packageId, uint8_t to, uint8_t from, uint8_t commCtrl, uint8_t dataCtrl, uint8_t port, uint32_t errCode) {
+void sendError(uint32_t packageId, uint8_t commCtrl, uint8_t dataCtrl, uint8_t port, uint32_t errCode) {
 	// Set acknowledgeBit and errorBit
 	canWriteFrame(
 		packageId,
-		to,
-		from,
 		(commCtrl | (uint8_t)CommunicationCtrl::acknowledgeBit) & (uint8_t)CommunicationCtrl::errorBit,
 		dataCtrl,
 		port,
@@ -328,7 +328,7 @@ void setDigitalOutput(uint8_t port, ActionType actionType) {
 		if (outputDigitals[port].value != value){
 			uint8_t commCtrl = 0x00;
 			uint8_t dataCtrl = (uint8_t)DataCtrl::bit;
-			canWriteFrame(nextPackageId(), 0xFF, thisDeviceId, commCtrl, dataCtrl, port, value);
+			canWriteFrame(nextPackageId(thisDeviceId, 0xFF), commCtrl, dataCtrl, port, value);
 
 			// Do the actuall change
 			digitalWrite(outputDigitalPins[port], value);
@@ -339,7 +339,7 @@ void setDigitalOutput(uint8_t port, ActionType actionType) {
 
 void setDigitalOutputRemote(uint8_t deviceId, uint8_t port, ActionType actionType) {
 	// Send command to change remote output port
-	canWriteFrame(nextPackageId(), deviceId, thisDeviceId, (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::set, port, (uint8_t)actionType);
+	canWriteFrame(nextPackageId(thisDeviceId, deviceId), (uint8_t)CommunicationCtrl::commandBit, (uint8_t)DataCtrl::set, port, (uint8_t)actionType);
 }
 
 void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
@@ -534,40 +534,40 @@ void updateActionLongpress(uint32_t longpress) {
 	tempActionItem->longpress = longpress;
 }
 
-Command& getCommand(uint32_t uniquePackageId){
+Command& getCommand(uint32_t packageId){
 	// Check for existing command
-	for (uint8_t commandIdx = 0; commandIdx < SIZE_COMMANDS; commandIdx++) {
-		if (commands[commandIdx].active == true && commands[commandIdx].uniquePackageId == uniquePackageId) {
-			commands[commandIdx].commandTime = millis();
-			return commands[commandIdx];
+	for (uint8_t idx = 0; idx < SIZE_COMMANDS; idx++) {
+		if (commands[idx].active == true && commands[idx].packageId == packageId) {
+			commands[idx].commandTime = millis();
+			return commands[idx];
 		}
 	}
 	
 	// Reserve a slot in the stack of commands
-	for (uint8_t commandIdx = 0; commandIdx < SIZE_COMMANDS; commandIdx++) {
-		if (commands[commandIdx].active == false) {
-			commands[commandIdx].commandTime = millis();
-			commands[commandIdx].uniquePackageId = uniquePackageId;
-			commands[commandIdx].active = true;
-			return commands[commandIdx];
+	for (uint8_t idx = 0; idx < SIZE_COMMANDS; idx++) {
+		if (commands[idx].active == false) {
+			commands[idx].commandTime = millis();
+			commands[idx].packageId = packageId;
+			commands[idx].active = true;
+			return commands[idx];
 		}
 	}
 
 	// Override oldest command
 	uint8_t oldestIdx = 0;
-	for (uint8_t commandIdx = 0; commandIdx < SIZE_COMMANDS; commandIdx++) {
-		if (commands[commandIdx].commandTime < commands[oldestIdx].commandTime) {
-			oldestIdx = commandIdx;
+	for (uint8_t idx = 0; idx < SIZE_COMMANDS; idx++) {
+		if (commands[idx].commandTime < commands[oldestIdx].commandTime) {
+			oldestIdx = idx;
 		}
 	}
 	commands[oldestIdx].commandTime = millis();
-	commands[oldestIdx].uniquePackageId = uniquePackageId;
+	commands[oldestIdx].packageId = packageId;
 	commands[oldestIdx].active = true;
 	return commands[oldestIdx];
 }
 
 void removeCommand(Command& command) {
-	command.uniquePackageId = 0;
+	command.packageId = 0;
 	command.commandTime     = 0;
 	command.active          = false;
 	command.isSet           = false;
@@ -585,10 +585,10 @@ void removeCommand(Command& command) {
 }
 
 void maintainCommands() {
-	// Commands older than 0.5 sec should be removed
-	for (uint8_t commandIdx = 0; commandIdx < SIZE_COMMANDS; commandIdx++) {
-		if (millis() - commands[commandIdx].commandTime > 500) {
-			removeCommand(commands[commandIdx]);
+	// Remove old commands
+	for (uint8_t idx = 0; idx < SIZE_COMMANDS; idx++) {
+		if (millis() - commands[idx].commandTime > COMMAND_MAX_AGE) {
+			removeCommand(commands[idx]);
 		}
 	}
 }
@@ -604,7 +604,7 @@ void execBypass(uint8_t gridDevIdx) {
 				uint8_t commCtrl = (uint8_t)CommunicationCtrl::commandBit | (uint8_t)CommunicationCtrl::notifyBit;
 				uint8_t dataCtrl = (uint8_t)DataCtrl::output | (uint8_t)DataCtrl::clearDelay;
 				// Send Notify package to others
-				canWriteFrame(nextPackageId(), actionItems[gridDevIdx].clearDelayDeviceId, thisDeviceId, commCtrl, dataCtrl, outputPort, 0);
+				canWriteFrame(nextPackageId(thisDeviceId, actionItems[gridDevIdx].clearDelayDeviceId), commCtrl, dataCtrl, outputPort, 0);
 			}
 		}
 	}
@@ -618,9 +618,9 @@ void execBypass(uint8_t gridDevIdx) {
 				uint8_t commCtrl = (uint8_t)CommunicationCtrl::commandBit | (uint8_t)CommunicationCtrl::notifyBit;
 				uint8_t dataCtrl = (uint8_t)DataCtrl::output;
 				// Send Notify package to others
-				uint32_t delayPackageId = nextPackageId();
-				canWriteFrame(delayPackageId, actionItems[gridDevIdx].deviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl | (uint8_t)DataCtrl::set, outputPort, (uint8_t)actionItems[gridDevIdx].type);
-				canWriteFrame(delayPackageId, actionItems[gridDevIdx].deviceId, thisDeviceId, commCtrl, dataCtrl | (uint8_t)DataCtrl::delay, outputPort, actionItems[gridDevIdx].delay);
+				uint32_t delayPackageId = nextPackageId(thisDeviceId, actionItems[gridDevIdx].deviceId);
+				canWriteFrame(delayPackageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl | (uint8_t)DataCtrl::set, outputPort, (uint8_t)actionItems[gridDevIdx].type);
+				canWriteFrame(delayPackageId, commCtrl, dataCtrl | (uint8_t)DataCtrl::delay, outputPort, actionItems[gridDevIdx].delay);
 			} else if (actionItems[gridDevIdx].deviceId == thisDeviceId) {
 				// Change value of local output port
 				setDigitalOutput(outputPort, actionItems[gridDevIdx].type);
@@ -636,13 +636,13 @@ void canProcessFrame(const CAN_message_t& rx) {
 	// Only process frames where CAN messages where length is 8 bytes
 	if (rx.len != 8) return;
 
-	// Unpack CAN Identifier
-	uint8_t targetDeviceId   = rx.id & 0xff;
-	uint32_t packageId       = rx.id >> 8;
-	uint32_t uniquePackageId = (rx.id & 0x1FFFFF00) | rx.buf[0]; // Unique package id is constructed of the sender package id and the id of the sender
+	uint32_t packageId       = rx.id;
+	uint16_t commandId       = rx.id >> 16;
+	uint8_t initiatorId     = (rx.id & 0xFF00) >> 8;
+	uint8_t responderId     = rx.id & 0xFF;
 
 	// Unpack CAN Payload
-	uint8_t sourceDeviceId = rx.buf[0];        // B1
+	// uint8_t TODO = rx.buf[0];        // B1
 	uint8_t commCtrl       = rx.buf[1];        // B2
 	uint8_t dataCtrl       = rx.buf[2];        // B3
 	uint8_t configCtrl     = rx.buf[2];        // B3
@@ -686,17 +686,17 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Do not answer. Acknowledge sent from another device
 			return;
 		}
-		if (rx.id != CAN_BCAST_ACTION_ADDRES) {
+		if (responderId != CAN_BROADCAST_ADDRES) {
 			// Frame has to be sent to broadcast address
 			return;
 		}
 		if (isSet || isPing || isError || isConfig) {
-			sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			sendError(packageId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 
 		// Return device firmware when asked to identify
-		sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, (uint8_t)DataCtrl::integer, 0, FIRMWARE_VERSION);
+		sendAck(packageId, commCtrl, dataCtrl, port, thisDeviceId);
 		return;
 	}
 
@@ -706,26 +706,31 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Do not answer. Acknowledge sent from another device
 			return;
 		}
-		if (!(rx.id == thisDeviceId || rx.id == CAN_BCAST_ACTION_ADDRES)) {
+		if (!(responderId == thisDeviceId || responderId == CAN_BROADCAST_ADDRES)) {
 			// Frame has to be sent to broadcast address or device address
 			return;
 		}
 
 		if (isSet || isError || isConfig) {
-			sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			sendError(packageId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 
 		// Pong
-		sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, 0, 0);
+		sendAck(packageId, commCtrl, dataCtrl, 0, thisDeviceId);
 		return;
 	}	
 
 	// Config
-	if (isConfig && rx.id == thisDeviceId) {
+	if (isConfig) {
+		// Only process if this device is expected to be a responder)
+		if (responderId != thisDeviceId){
+			return;
+		}
+		
 		// Validate communication byte
 		if (!isCommand || isError) {
-			sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			sendError(packageId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			return;
 		}
 
@@ -733,13 +738,13 @@ void canProcessFrame(const CAN_message_t& rx) {
 		if (isConfigSet == true && static_cast<ConfigOptions>(configOption) == ConfigOptions::writeEEPROM) {
 			// Store configuration into EEPROM
 			uint32_t EEPROMSize = saveConfig();
-			sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, configCtrl, port, EEPROMSize);
+			sendAck(packageId, commCtrl, configCtrl, port, EEPROMSize);
 			return;
 		}
 
 		// Validate port range
 		if (port > 15) {
-			sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, configCtrl, port, ERR_INVALID_PORT);
+			sendError(packageId, commCtrl, configCtrl, port, ERR_INVALID_PORT);
 			return;
 		}
 
@@ -800,11 +805,11 @@ void canProcessFrame(const CAN_message_t& rx) {
 					inputConfig[port].bypassOnDisconnect = data;
 					break;
 				default:
-					sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+					sendError(packageId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 					return;
 					break;	
 			}
-			sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, configCtrl, port, data);
+			sendAck(packageId, commCtrl, configCtrl, port, data);
 			return;
 		} else if (isConfigGet) {
 			uint32_t confData = 0;
@@ -822,54 +827,42 @@ void canProcessFrame(const CAN_message_t& rx) {
 						if (actionItems[i].inputPort == port) {
 							confData = ((uint8_t)actionItems[i].trigger) << 16 | ((uint8_t)actionItems[i].mode) << 8 | (uint8_t)actionItems[i].type;
 							// P1 - action base
-							sendAck(uniquePackageId,
-								sourceDeviceId,
-								thisDeviceId,
+							sendAck(packageId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionBase,
 								port,
 								confData);
 							
 							// P2 - action ports
-							sendAck(uniquePackageId,
-								sourceDeviceId,
-								thisDeviceId,
+							sendAck(packageId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionPorts,
 								port,
 								(actionItems[i].deviceId << 24) | actionItems[i].ports);
 
 							// P3 - action skip when delay
-							sendAck(uniquePackageId,
-								sourceDeviceId,
-								thisDeviceId,
+							sendAck(packageId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionSkipWhenDelay,
 								port,
 								(actionItems[i].skipWhenDelayDeviceId << 24) | actionItems[i].skipWhenDelayPorts);
 
 							// P4 - clear delays
-							sendAck(uniquePackageId,
-								sourceDeviceId,
-								thisDeviceId,
+							sendAck(packageId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionClearDelays,
 								port,
 								(actionItems[i].clearDelayDeviceId << 24) | actionItems[i].clearDelayPorts);
 									
 							// P5 - action delay
-							sendAck(uniquePackageId,
-								sourceDeviceId,
-								thisDeviceId,
+							sendAck(packageId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionDelay,
 								port,
 								actionItems[i].delay);
 							
 							// P6 - action longpress in milliseconds
-							sendAck(uniquePackageId,
-								sourceDeviceId,
-								thisDeviceId,
+							sendAck(packageId,
 								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
 								(uint8_t)ConfigCtrl::configBit | (uint8_t)ConfigOptions::actionLongpress,
 								port,
@@ -877,7 +870,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 						}
 					}
 					// Send empty package without waitBit
-					sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, configCtrl, port, 0);
+					sendAck(packageId, commCtrl, configCtrl, port, 0);
 					return;
 				case ConfigOptions::bypassInstantly:
 					confData = inputConfig[port].bypassInstantly ? 1 : 0;
@@ -889,16 +882,16 @@ void canProcessFrame(const CAN_message_t& rx) {
 					confData = inputConfig[port].bypassOnDisconnect;
 					break;
 				default:
-					sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+					sendError(packageId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 					return;
 					break;
 			}
-			sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, configCtrl, port, confData);
+			sendAck(packageId, commCtrl, configCtrl, port, confData);
 			return;
 		}
 
 		// Operation must be Get or Set
-		sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+		sendError(packageId, commCtrl, configCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 		return;
 	}
 
@@ -909,56 +902,56 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// List all delays
 			bool delayCleard = false;
 			if (port == 0xFF) {
-				// Specific delay can only be cleard on target device
-				if (targetDeviceId == thisDeviceId) {
-					delayCleard = clearDelayById(targetDeviceId, data);
+				// Only process when this device is marked as a responder
+				if (responderId == thisDeviceId) {
+					delayCleard = clearDelayById(thisDeviceId, data);
 				}
 			} else {
-				clearDelays(targetDeviceId, port);
+				clearDelays(responderId, port);
 				delayCleard = true;
 			}
 
-			// Only respond to requester when this device was also target device
-			if (targetDeviceId == thisDeviceId) {
+			// Only respond to initiator when this device was marked as a responder
+			if (responderId == thisDeviceId) {
 				if (delayCleard) {
-					sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, delayCleard);
+					sendAck(packageId, commCtrl, dataCtrl, port, delayCleard);
 				} else {
-					sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
+					sendError(packageId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
 				}
 			}
 			return;
 		}
 
 		if (isGet) {
-			// Only process when this device is also a target device
-			if (targetDeviceId == thisDeviceId) {
+			// Only respond to initiator when this device was marked as a responder
+			if (responderId == thisDeviceId) {
 				// Send back digital input/output value
 				if (isBit || isByte || isInteger) {
-					sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, isInput ? inputDigitals[port].value : outputDigitals[port].value);
+					sendAck(packageId, commCtrl, dataCtrl, port, isInput ? inputDigitals[port].value : outputDigitals[port].value);
 				} else {
 					// TODO - TYPE_FLOAT
-					sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
+					sendError(packageId, commCtrl, dataCtrl, port, ERR_UNKNOWN);
 				}
 			}
 			return;
 		}
 
 		if (isListDelays) {
-			// Only process when this device is also a target device
-			if (targetDeviceId == thisDeviceId) {
+			// Only process when this device is marked as a responder
+			if (responderId == thisDeviceId) {
 				// List all delays
 				for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 					if (delays[delayIdx].active == true) {
 						dataCtrl = (uint8_t)DataCtrl::listDelays | (uint8_t)DataCtrl::digital | (uint8_t)DataCtrl::output | (uint8_t)DataCtrl::integer;
-						sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].id);
-						sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].deviceId);
-						sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].execute == true ? 1 : 0);
-						sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
-						sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, (delays[delayIdx].time - micros())/1000);
+						sendAck(packageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].id);
+						sendAck(packageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].deviceId);
+						sendAck(packageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, delays[delayIdx].execute == true ? 1 : 0);
+						sendAck(packageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
+						sendAck(packageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, delays[delayIdx].port, (delays[delayIdx].time - micros())/1000);
 					}
 				}
 				// Send last package without wait and empty
-				sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, 0xFF, 0);
+				sendAck(packageId, commCtrl, dataCtrl, 0xFF, 0);
 			}
 			return;
 		}
@@ -966,14 +959,14 @@ void canProcessFrame(const CAN_message_t& rx) {
 		// Only allow writing to output ports
 		if (isInput) {
 			// Only respond to requester when this device was also target device
-			if (targetDeviceId == thisDeviceId) {
-				sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+			if (responderId == thisDeviceId) {
+				sendError(packageId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 			}
 			return;
 		}
 
 		// Set command
-		Command& command = getCommand(uniquePackageId);
+		Command& command = getCommand(packageId);
 		if (isSet){
 			command.isSet = isSet;
 			command.isDigital = isDigital;
@@ -989,7 +982,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Command has to match on port, digital/analog, input/output otherwise remove command
 			if (port != command.port || isDigital != command.isDigital || isOutput != command.isOutput) {
 				removeCommand(command);
-				sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+				sendError(packageId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 				return;
 			}
 			command.delay = data;
@@ -997,7 +990,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 			// Command has to match on port, digital/analog, input/output otherwise remove command
 			if (port != command.port || isDigital != command.isDigital || isOutput != command.isOutput) {
 				removeCommand(command);
-				sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+				sendError(packageId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
 				return;
 			}
 			// Future use
@@ -1005,9 +998,9 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 		
 		// Add informational delay for other devices
-		if (targetDeviceId != thisDeviceId) {
+		if (responderId != thisDeviceId) {
 			if (!isWait && command.isSet && command.delay > 0) {
-				setDelay(targetDeviceId, command.port, command.type, command.delay);
+				setDelay(responderId, command.port, command.type, command.delay);
 			}
 			return;
 		}
@@ -1015,7 +1008,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		// Execute command when no other data is expected
 		if (!isWait && command.isSet) {
 			if (command.delay > 0) {
-				setDelay(targetDeviceId, command.port, command.type, command.delay);
+				setDelay(responderId, command.port, command.type, command.delay);
 			} else {
 				// Set output value, for now this covers all dataTypes except decimals
 				if (command.isBit || command.isByte || command.isInteger) {
@@ -1024,12 +1017,12 @@ void canProcessFrame(const CAN_message_t& rx) {
 				} else {
 					// Cleanup and respond with an error
 					removeCommand(command);
-					sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
+					sendError(packageId, commCtrl, dataCtrl, port, ERR_INVALID_TYPE);
 					return;
 				}
 			}
 			// Send back current outputDigital value
-			sendAck(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, (uint8_t)DataCtrl::set, port, outputDigitals[port].value);
+			sendAck(packageId, commCtrl, (uint8_t)DataCtrl::set, port, outputDigitals[port].value);
 
 			// Remove command from cache
 			removeCommand(command);
@@ -1037,8 +1030,11 @@ void canProcessFrame(const CAN_message_t& rx) {
 		return;
 	}
 
-	// No action could be taken based on the frame definition
-	sendError(uniquePackageId, sourceDeviceId, thisDeviceId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+	// Only respond to initiator when this device was marked as a responder
+	if (responderId == thisDeviceId) {
+		// No action could be taken based on the frame definition
+		sendError(packageId, commCtrl, dataCtrl, port, ERR_OPERATION_NOT_ALLOWED);
+	}
 	return;
 }
 
@@ -1182,7 +1178,7 @@ void loop() {
 			uint8_t commCtrl = (uint8_t)CommunicationCtrl::empty;
 			uint8_t dataCtrl = (uint8_t)DataCtrl::input | (uint8_t)DataCtrl::bit;
 			// Push to a broadcast address
-			canWriteFrame(nextPackageId(), 0xFF, thisDeviceId, commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].value);
+			canWriteFrame(nextPackageId(thisDeviceId, 0xFF), commCtrl, dataCtrl, inputPort, inputDigitals[inputPort].value);
 
 			// Only take bypass actions when bypass criteria have been met
 			if (inputDigitals[inputPort].bypass) {
