@@ -907,18 +907,13 @@ void canProcessFrame(const CAN_message_t& rx) {
 		bool isClearDelayById   = operation == (uint8_t)CommandOper::clearDelayById;
 		bool isClearDelayByPort = operation == (uint8_t)CommandOper::clearDelayByPort;
 
-		// This action could be broadcasted as well
 		if (isClearDelayById) {
-			// List all delays
 			bool delayCleard = false;
 			if (port == 0xFF) {
 				// Only process when thisDeviceId was a target
 				if (responderId == thisDeviceId) {
 					delayCleard = clearDelayById(thisDeviceId, data);
 				}
-			} else {
-				clearDelays(responderId, port);
-				delayCleard = true;
 			}
 
 			// Only respond to initiator when thisDeviceId was a target
@@ -928,6 +923,18 @@ void canProcessFrame(const CAN_message_t& rx) {
 				} else {
 					sendError(packageId, commCtrl, dataCtrl, operation, port, ERR_UNKNOWN);
 				}
+			}
+			return;
+		}
+
+		if (isClearDelayByPort) {
+			// Clear delays for a specific port
+			clearDelays(responderId, port);
+
+			// Only respond to initiator when thisDeviceId was a target
+			if (responderId == thisDeviceId) {
+				// This operation could not return error
+				sendAck(packageId, commCtrl, dataCtrl, operation, port, 0);
 			}
 			return;
 		}
