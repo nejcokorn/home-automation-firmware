@@ -8,7 +8,7 @@
 #define FIRMWARE_VERSION  0x00000100UL
 
 // Communication control byte
-enum class CommunicationCtrl: uint8_t {
+enum class CommCtrl: uint8_t {
 	empty          = 0x00,
 	discoveryBit   = 0x80,
 	pingBit        = 0x40,
@@ -38,7 +38,7 @@ enum class DataCtrl: uint8_t {
 };
 
 // Command operations
-enum class CommandOperations: uint8_t {
+enum class CommandOper: uint8_t {
 	empty             = 0x00,
 	get               = 0x00,
 	set               = 0x01,
@@ -49,7 +49,7 @@ enum class CommandOperations: uint8_t {
 };
 
 // Config operations
-enum class ConfigOperations: uint8_t {
+enum class ConfigOper: uint8_t {
 	get                 = 0x00, // Combine get operation with the rest of the operations
 	set                 = 0x80, // Combine set operation with the rest of the operations
 	
@@ -288,7 +288,7 @@ void sendAck(uint32_t packageId, uint8_t commCtrl, uint8_t dataCtrl, uint8_t ope
 	// Set acknowledgeBit, ensure no errorBit
 	canWriteFrame(
 		packageId,
-		(commCtrl | (uint8_t)CommunicationCtrl::acknowledgeBit) & ~(uint8_t)CommunicationCtrl::errorBit,
+		(commCtrl | (uint8_t)CommCtrl::acknowledgeBit) & ~(uint8_t)CommCtrl::errorBit,
 		dataCtrl,
 		operation,
 		port,
@@ -300,7 +300,7 @@ void sendError(uint32_t packageId, uint8_t commCtrl, uint8_t dataCtrl, uint8_t o
 	// Set acknowledgeBit and errorBit
 	canWriteFrame(
 		packageId,
-		(commCtrl | (uint8_t)CommunicationCtrl::acknowledgeBit) & (uint8_t)CommunicationCtrl::errorBit,
+		(commCtrl | (uint8_t)CommCtrl::acknowledgeBit) & (uint8_t)CommCtrl::errorBit,
 		dataCtrl,
 		operation,
 		port,
@@ -327,9 +327,9 @@ void setDigitalOutput(uint8_t port, ActionType actionType) {
 
 		// If value has changed, push data change frame
 		if (outputDigitals[port].value != value){
-			uint8_t commCtrl  = (uint8_t)CommunicationCtrl::empty;
+			uint8_t commCtrl  = (uint8_t)CommCtrl::empty;
 			uint8_t dataCtrl  = (uint8_t)DataCtrl::bit;
-			uint8_t operation = (uint8_t)CommandOperations::empty;
+			uint8_t operation = (uint8_t)CommandOper::empty;
 			canWriteFrame(nextPackageId(thisDeviceId, 0xFF), commCtrl, dataCtrl, operation, port, value);
 
 			// Do the actuall change
@@ -341,7 +341,7 @@ void setDigitalOutput(uint8_t port, ActionType actionType) {
 
 void setDigitalOutputRemote(uint8_t deviceId, uint8_t port, ActionType actionType) {
 	// Send command to change remote output port
-	canWriteFrame(nextPackageId(thisDeviceId, deviceId), (uint8_t)CommunicationCtrl::empty, (uint8_t)DataCtrl::commandBit, (uint8_t)CommandOperations::set, port, (uint8_t)actionType);
+	canWriteFrame(nextPackageId(thisDeviceId, deviceId), (uint8_t)CommCtrl::empty, (uint8_t)DataCtrl::commandBit, (uint8_t)CommandOper::set, port, (uint8_t)actionType);
 }
 
 void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
@@ -603,9 +603,9 @@ void execBypass(uint8_t gridDevIdx) {
 				clearDelays(actionItems[gridDevIdx].clearDelayDeviceId, outputPort);
 
 				// Notify other devices to clear the delay
-				uint8_t commCtrl = (uint8_t)CommunicationCtrl::notifyBit;
+				uint8_t commCtrl = (uint8_t)CommCtrl::notifyBit;
 				uint8_t dataCtrl = (uint8_t)DataCtrl::commandBit | (uint8_t)DataCtrl::output;
-				uint8_t operation = (uint8_t)CommandOperations::clearDelayByPort;
+				uint8_t operation = (uint8_t)CommandOper::clearDelayByPort;
 				// Send Notify package to others
 				canWriteFrame(nextPackageId(thisDeviceId, actionItems[gridDevIdx].clearDelayDeviceId), commCtrl, dataCtrl, operation, outputPort, 0);
 			}
@@ -618,13 +618,13 @@ void execBypass(uint8_t gridDevIdx) {
 				setDelay(actionItems[gridDevIdx].deviceId, outputPort, actionItems[gridDevIdx].type, actionItems[gridDevIdx].delay);
 
 				// Notify other devices to set the informational delay
-				uint8_t commCtrl = (uint8_t)CommunicationCtrl::notifyBit;
+				uint8_t commCtrl = (uint8_t)CommCtrl::notifyBit;
 				uint8_t dataCtrl = (uint8_t)DataCtrl::commandBit | (uint8_t)DataCtrl::output;
-				uint8_t operation = (uint8_t)CommandOperations::empty;
+				uint8_t operation = (uint8_t)CommandOper::empty;
 				// Send Notify package to others
 				uint32_t delayPackageId = nextPackageId(thisDeviceId, actionItems[gridDevIdx].deviceId);
-				canWriteFrame(delayPackageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, operation | (uint8_t)CommandOperations::set, outputPort, (uint8_t)actionItems[gridDevIdx].type);
-				canWriteFrame(delayPackageId, commCtrl, dataCtrl, operation | (uint8_t)CommandOperations::delay, outputPort, actionItems[gridDevIdx].delay);
+				canWriteFrame(delayPackageId, commCtrl | (uint8_t)CommCtrl::waitBit, dataCtrl, operation | (uint8_t)CommandOper::set, outputPort, (uint8_t)actionItems[gridDevIdx].type);
+				canWriteFrame(delayPackageId, commCtrl, dataCtrl, operation | (uint8_t)CommandOper::delay, outputPort, actionItems[gridDevIdx].delay);
 			} else if (actionItems[gridDevIdx].deviceId == thisDeviceId) {
 				// Change value of local output port
 				setDigitalOutput(outputPort, actionItems[gridDevIdx].type);
@@ -653,12 +653,12 @@ void canProcessFrame(const CAN_message_t& rx) {
 	uint32_t data      = ((uint32_t)rx.buf[4] << 24) | ((uint32_t)rx.buf[5] << 16) | ((uint32_t)rx.buf[6] << 8) | (uint32_t)rx.buf[7]; // B5..B8
 
 	// Communication control parameters
-	bool isDiscovery   = (commCtrl & (uint8_t)CommunicationCtrl::discoveryBit) == (uint8_t)CommunicationCtrl::discoveryBit;
-	bool isPing        = (commCtrl & (uint8_t)CommunicationCtrl::pingBit) == (uint8_t)CommunicationCtrl::pingBit;
-	bool isAcknowledge = (commCtrl & (uint8_t)CommunicationCtrl::acknowledgeBit) == (uint8_t)CommunicationCtrl::acknowledgeBit;
-	bool isError       = (commCtrl & (uint8_t)CommunicationCtrl::errorBit) == (uint8_t)CommunicationCtrl::errorBit;
-	bool isWait        = (commCtrl & (uint8_t)CommunicationCtrl::waitBit) == (uint8_t)CommunicationCtrl::waitBit;
-	bool isNotify      = (commCtrl & (uint8_t)CommunicationCtrl::notifyBit) == (uint8_t)CommunicationCtrl::notifyBit;
+	bool isDiscovery   = (commCtrl & (uint8_t)CommCtrl::discoveryBit) == (uint8_t)CommCtrl::discoveryBit;
+	bool isPing        = (commCtrl & (uint8_t)CommCtrl::pingBit) == (uint8_t)CommCtrl::pingBit;
+	bool isAcknowledge = (commCtrl & (uint8_t)CommCtrl::acknowledgeBit) == (uint8_t)CommCtrl::acknowledgeBit;
+	bool isError       = (commCtrl & (uint8_t)CommCtrl::errorBit) == (uint8_t)CommCtrl::errorBit;
+	bool isWait        = (commCtrl & (uint8_t)CommCtrl::waitBit) == (uint8_t)CommCtrl::waitBit;
+	bool isNotify      = (commCtrl & (uint8_t)CommCtrl::notifyBit) == (uint8_t)CommCtrl::notifyBit;
 	
 	// Data control parameters
 	bool isCommand    = (dataCtrl & (uint8_t)DataCtrl::commandBit) == (uint8_t)DataCtrl::commandBit;
@@ -716,9 +716,9 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Config
 	if (isConfig) {
-		bool isConfigGet         = (operation & 0x80) == (uint8_t)ConfigOperations::get;
-		bool isConfigSet         = (operation & 0x80) == (uint8_t)ConfigOperations::set;
-		uint32_t configOperation = operation & 0x7F;
+		bool isConfigGet         = (operation & 0x80) == (uint8_t)ConfigOper::get;
+		bool isConfigSet         = (operation & 0x80) == (uint8_t)ConfigOper::set;
+		uint32_t configOper = operation & 0x7F;
 
 		// Only process if this device is expected to be a responder)
 		if (responderId != thisDeviceId){
@@ -732,7 +732,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		// Write current configuration to EEPROM
-		if (isConfigSet && static_cast<ConfigOperations>(configOperation) == ConfigOperations::writeEEPROM) {
+		if (isConfigSet && static_cast<ConfigOper>(configOper) == ConfigOper::writeEEPROM) {
 			// Store configuration into EEPROM
 			uint32_t EEPROMSize = saveConfig();
 			sendAck(packageId, commCtrl, dataCtrl, operation, port, EEPROMSize);
@@ -746,14 +746,14 @@ void canProcessFrame(const CAN_message_t& rx) {
 		}
 
 		if (isConfigSet) {
-			switch (static_cast<ConfigOperations>(configOperation)) {
-				case ConfigOperations::debounce:
+			switch (static_cast<ConfigOper>(configOper)) {
+				case ConfigOper::debounce:
 					inputConfig[port].debounce = data;
 					break;
-				case ConfigOperations::doubleclick:
+				case ConfigOper::doubleclick:
 					inputConfig[port].doubleclick = data;
 					break;
-				case ConfigOperations::actions:
+				case ConfigOper::actions:
 					// Remove all actions for specific port
 					for (uint16_t idx = 0; idx < SIZE_ACTION_MAP; idx++) {
 						if (actionItems[idx].inputPort == port) {
@@ -761,44 +761,44 @@ void canProcessFrame(const CAN_message_t& rx) {
 						}
 					}
 					break;
-				case ConfigOperations::actionBase: {
+				case ConfigOper::actionBase: {
 					ActionTrigger trigger = (ActionTrigger)((data >> 16) & 0xFF);
 					ActionMode mode = (ActionMode)((data >> 8) & 0xFF);
 					ActionType type = (ActionType)(data & 0xFF);
 					updateActionItem(port, trigger, mode, type);
 					break;
 				}
-				case ConfigOperations::actionPorts: {
+				case ConfigOper::actionPorts: {
 					uint8_t actionDeviceId = data >> 24;
 					uint16_t actionPorts = data & 0xFFF;
 					updateActionPorts(actionDeviceId, actionPorts);
 					break;
 				}
-				case ConfigOperations::actionSkipWhenDelay: {
+				case ConfigOper::actionSkipWhenDelay: {
 					uint16_t actionDeviceId = data >> 24;
 					uint16_t actionPorts = data & 0xFFF;
 					updateActionSkipWhenDelay(actionDeviceId, actionPorts);
 					break;
 				}
-				case ConfigOperations::actionClearDelays: {
+				case ConfigOper::actionClearDelays: {
 					uint8_t actionDeviceId = data >> 24;
 					uint16_t actionPorts = data & 0xFFF;
 					updateActionClearDelays(actionDeviceId, actionPorts);
 					break;
 				}
-				case ConfigOperations::actionDelay:
+				case ConfigOper::actionDelay:
 					updateActionDelay(data);
 					break;
-				case ConfigOperations::actionLongpress:
+				case ConfigOper::actionLongpress:
 					updateActionLongpress(data);
 					break;
-				case ConfigOperations::bypassInstantly:
+				case ConfigOper::bypassInstantly:
 					inputConfig[port].bypassInstantly = data > 0;
 					break;
-				case ConfigOperations::bypassOnDIPSwitch:
+				case ConfigOper::bypassOnDIPSwitch:
 					inputConfig[port].bypassOnDIPSwitch = data > 0;
 					break;
-				case ConfigOperations::bypassOnDisconnect:
+				case ConfigOper::bypassOnDisconnect:
 					inputConfig[port].bypassOnDisconnect = data;
 					break;
 				default:
@@ -810,64 +810,64 @@ void canProcessFrame(const CAN_message_t& rx) {
 			return;
 		} else if (isConfigGet) {
 			uint32_t confData = 0;
-			switch (static_cast<ConfigOperations>(configOperation)) {
-				case ConfigOperations::debounce:
+			switch (static_cast<ConfigOper>(configOper)) {
+				case ConfigOper::debounce:
 					confData = ((uint32_t)inputConfig[port].debounce);
 					break;
-				case ConfigOperations::doubleclick:
+				case ConfigOper::doubleclick:
 					confData = ((uint32_t)inputConfig[port].doubleclick);
 					break;
-				case ConfigOperations::actions:
-					ConfigOperations typeToActionConf[9];
+				case ConfigOper::actions:
+					ConfigOper typeToActionConf[9];
 					// Send configurations for output ports related to all devices on grid
 					for (uint16_t i = 0; i < SIZE_ACTION_MAP; i++) {
 						if (actionItems[i].inputPort == port) {
 							confData = ((uint8_t)actionItems[i].trigger) << 16 | ((uint8_t)actionItems[i].mode) << 8 | (uint8_t)actionItems[i].type;
 							// P1 - action base
 							sendAck(packageId,
-								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								commCtrl | (uint8_t)CommCtrl::waitBit,
 								(uint8_t)DataCtrl::configBit,
-								(uint8_t)ConfigOperations::actionBase,
+								(uint8_t)ConfigOper::actionBase,
 								port,
 								confData);
 							
 							// P2 - action ports
 							sendAck(packageId,
-								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								commCtrl | (uint8_t)CommCtrl::waitBit,
 								(uint8_t)DataCtrl::configBit,
-								(uint8_t)ConfigOperations::actionPorts,
+								(uint8_t)ConfigOper::actionPorts,
 								port,
 								(actionItems[i].deviceId << 24) | actionItems[i].ports);
 
 							// P3 - action skip when delay
 							sendAck(packageId,
-								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								commCtrl | (uint8_t)CommCtrl::waitBit,
 								(uint8_t)DataCtrl::configBit,
-								(uint8_t)ConfigOperations::actionSkipWhenDelay,
+								(uint8_t)ConfigOper::actionSkipWhenDelay,
 								port,
 								(actionItems[i].skipWhenDelayDeviceId << 24) | actionItems[i].skipWhenDelayPorts);
 
 							// P4 - clear delays
 							sendAck(packageId,
-								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								commCtrl | (uint8_t)CommCtrl::waitBit,
 								(uint8_t)DataCtrl::configBit,
-								(uint8_t)ConfigOperations::actionClearDelays,
+								(uint8_t)ConfigOper::actionClearDelays,
 								port,
 								(actionItems[i].clearDelayDeviceId << 24) | actionItems[i].clearDelayPorts);
 									
 							// P5 - action delay
 							sendAck(packageId,
-								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								commCtrl | (uint8_t)CommCtrl::waitBit,
 								(uint8_t)DataCtrl::configBit,
-								(uint8_t)ConfigOperations::actionDelay,
+								(uint8_t)ConfigOper::actionDelay,
 								port,
 								actionItems[i].delay);
 							
 							// P6 - action longpress in milliseconds
 							sendAck(packageId,
-								commCtrl | (uint8_t)CommunicationCtrl::waitBit,
+								commCtrl | (uint8_t)CommCtrl::waitBit,
 								(uint8_t)DataCtrl::configBit,
-								(uint8_t)ConfigOperations::actionLongpress,
+								(uint8_t)ConfigOper::actionLongpress,
 								port,
 								actionItems[i].longpress);
 						}
@@ -875,13 +875,13 @@ void canProcessFrame(const CAN_message_t& rx) {
 					// Send empty package without waitBit
 					sendAck(packageId, commCtrl, dataCtrl, operation, port, 0);
 					return;
-				case ConfigOperations::bypassInstantly:
+				case ConfigOper::bypassInstantly:
 					confData = inputConfig[port].bypassInstantly ? 1 : 0;
 					break;
-				case ConfigOperations::bypassOnDIPSwitch:
+				case ConfigOper::bypassOnDIPSwitch:
 					confData = inputConfig[port].bypassOnDIPSwitch ? 1 : 0;
 					break;
-				case ConfigOperations::bypassOnDisconnect:
+				case ConfigOper::bypassOnDisconnect:
 					confData = inputConfig[port].bypassOnDisconnect;
 					break;
 				default:
@@ -900,12 +900,12 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 	// Command - data operation
 	if (isCommand) {
-		bool isGet              = operation == (uint8_t)CommandOperations::get;
-		bool isSet              = operation == (uint8_t)CommandOperations::set;
-		bool isDelay            = operation == (uint8_t)CommandOperations::delay;
-		bool isListDelays       = operation == (uint8_t)CommandOperations::listDelays;
-		bool isClearDelayById   = operation == (uint8_t)CommandOperations::clearDelayById;
-		bool isClearDelayByPort = operation == (uint8_t)CommandOperations::clearDelayByPort;
+		bool isGet              = operation == (uint8_t)CommandOper::get;
+		bool isSet              = operation == (uint8_t)CommandOper::set;
+		bool isDelay            = operation == (uint8_t)CommandOper::delay;
+		bool isListDelays       = operation == (uint8_t)CommandOper::listDelays;
+		bool isClearDelayById   = operation == (uint8_t)CommandOper::clearDelayById;
+		bool isClearDelayByPort = operation == (uint8_t)CommandOper::clearDelayByPort;
 
 		// This action could be broadcasted as well
 		if (isClearDelayById) {
@@ -953,11 +953,11 @@ void canProcessFrame(const CAN_message_t& rx) {
 				for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 					if (delays[delayIdx].active == true) {
 						dataCtrl = (uint8_t)DataCtrl::digital | (uint8_t)DataCtrl::output | (uint8_t)DataCtrl::integer;
-						sendAck(packageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, operation, delays[delayIdx].port, delays[delayIdx].id);
-						sendAck(packageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, operation, delays[delayIdx].port, delays[delayIdx].deviceId);
-						sendAck(packageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, operation, delays[delayIdx].port, delays[delayIdx].execute == true ? 1 : 0);
-						sendAck(packageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, operation, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
-						sendAck(packageId, commCtrl | (uint8_t)CommunicationCtrl::waitBit, dataCtrl, operation, delays[delayIdx].port, (delays[delayIdx].time - micros())/1000);
+						sendAck(packageId, commCtrl | (uint8_t)CommCtrl::waitBit, dataCtrl, operation, delays[delayIdx].port, delays[delayIdx].id);
+						sendAck(packageId, commCtrl | (uint8_t)CommCtrl::waitBit, dataCtrl, operation, delays[delayIdx].port, delays[delayIdx].deviceId);
+						sendAck(packageId, commCtrl | (uint8_t)CommCtrl::waitBit, dataCtrl, operation, delays[delayIdx].port, delays[delayIdx].execute == true ? 1 : 0);
+						sendAck(packageId, commCtrl | (uint8_t)CommCtrl::waitBit, dataCtrl, operation, delays[delayIdx].port, (uint8_t)delays[delayIdx].type);
+						sendAck(packageId, commCtrl | (uint8_t)CommCtrl::waitBit, dataCtrl, operation, delays[delayIdx].port, (delays[delayIdx].time - micros())/1000);
 					}
 				}
 				// Send last package without wait and empty
@@ -1176,9 +1176,9 @@ void loop() {
 
 		// Push event on input data changed - push raw data
 		if (inputChanged) {
-			uint8_t commCtrl  = (uint8_t)CommunicationCtrl::empty;
+			uint8_t commCtrl  = (uint8_t)CommCtrl::empty;
 			uint8_t dataCtrl  = (uint8_t)DataCtrl::input | (uint8_t)DataCtrl::bit;
-			uint8_t operation = (uint8_t)CommandOperations::empty;
+			uint8_t operation = (uint8_t)CommandOper::empty;
 			// Push to a broadcast address
 			canWriteFrame(nextPackageId(thisDeviceId, 0xFF), commCtrl, dataCtrl, operation, inputPort, inputDigitals[inputPort].value);
 
