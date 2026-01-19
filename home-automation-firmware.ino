@@ -192,6 +192,7 @@ struct Command {
 	bool active;
 	uint32_t packageId;
 	uint32_t commandTime;
+	bool isNotify;
 	// Command properties
 	bool isInput;
 	bool isOutput;
@@ -344,7 +345,7 @@ void setDigitalOutputRemote(uint8_t deviceId, uint8_t port, ActionType actionTyp
 	canWriteFrame(nextPackageId(thisDeviceId, deviceId), (uint8_t)CommCtrl::empty, (uint8_t)DataCtrl::commandBit, (uint8_t)CommandOper::set, port, (uint8_t)actionType);
 }
 
-void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay) {
+void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay, bool execute = true) {
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (!delays[delayIdx].active) {
 			delays[delayIdx].id = delayIdSequence++;
@@ -571,6 +572,7 @@ Command& getCommand(uint32_t packageId){
 void removeCommand(Command& command) {
 	command.packageId = 0;
 	command.commandTime     = 0;
+	command.isNotify        = false;
 	command.active          = false;
 	command.isSet           = false;
 	command.isDigital       = false;
@@ -985,6 +987,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 		// Set command
 		Command& command = getCommand(packageId);
 		if (isSet){
+			command.isNotify = isNotify;
 			command.isSet = isSet;
 			command.isDigital = isDigital;
 			command.isAnalog = isAnalog;
@@ -1008,7 +1011,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 		// Add informational delay for other devices
 		if (responderId != thisDeviceId) {
 			if (!isWait && command.isSet && command.delay > 0) {
-				setDelay(responderId, command.port, command.type, command.delay);
+				bool execute = command.isNotify == true ? false : true;
+				setDelay(responderId, command.port, command.type, command.delay, execute);
 			}
 			return;
 		}
@@ -1016,7 +1020,8 @@ void canProcessFrame(const CAN_message_t& rx) {
 		// Execute command when no other data is expected
 		if (!isWait && command.isSet) {
 			if (command.delay > 0) {
-				setDelay(responderId, command.port, command.type, command.delay);
+				bool execute = command.isNotify == true ? false : true;
+				setDelay(responderId, command.port, command.type, command.delay, execute);
 			} else {
 				// Set output value, for now this covers all dataTypes except decimals
 				if (command.isBit || command.isByte || command.isInteger) {
@@ -1302,10 +1307,12 @@ void loop() {
 	// Watch for delay timers
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (delays[delayIdx].active == true && delays[delayIdx].time < micros()) {
-			if (delays[delayIdx].deviceId == thisDeviceId) {
-				setDigitalOutput(delays[delayIdx].port, delays[delayIdx].type);
-			} else {
-				setDigitalOutputRemote(delays[delayIdx].deviceId, delays[delayIdx].port, delays[delayIdx].type);
+			if (delays[delayIdx].execute == true) {
+				if (delays[delayIdx].deviceId == thisDeviceId) {
+					setDigitalOutput(delays[delayIdx].port, delays[delayIdx].type);
+				} else {
+					setDigitalOutputRemote(delays[delayIdx].deviceId, delays[delayIdx].port, delays[delayIdx].type);
+				}
 			}
 			// Clear out only this delay
 			clearDelayById(delays[delayIdx].deviceId, delays[delayIdx].id);
