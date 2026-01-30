@@ -361,9 +361,16 @@ void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay, b
 	}
 }
 
-void clearDelays(uint8_t deviceId, uint8_t port) {
+std::vector<uint32_t> clearDelays(uint8_t deviceId, uint8_t port) {
+	std::vector<uint32_t> deletedDelayIds;
+	deletedDelayIds.reserve(SIZE_DELAYS);
+
 	for (uint8_t delayIdx = 0; delayIdx < SIZE_DELAYS; delayIdx++) {
 		if (delays[delayIdx].deviceId == deviceId && delays[delayIdx].port == port) {
+			// Stack removed delay
+			deletedDelayIds.push_back(delays[delayIdx].id);
+
+			// Remove delay
 			delays[delayIdx].id = 0;
 			delays[delayIdx].active = false;
 			delays[delayIdx].execute = false;
@@ -373,6 +380,7 @@ void clearDelays(uint8_t deviceId, uint8_t port) {
 			delays[delayIdx].time = 0;
 		}
 	}
+	return deletedDelayIds;
 }
 
 bool clearDelayById(uint8_t deviceId, uint id) {
@@ -932,11 +940,15 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 		if (isClearDelayByPort) {
 			// Clear delays for a specific port
-			clearDelays(responderId, port);
-
-			// Only respond to initiator when thisDeviceId was a target
+			std::vector<uint32_t> deletedDelayIds = clearDelays(responderId, port);
+			
+			// This operation could not return error
 			if (responderId == thisDeviceId) {
-				// This operation could not return error
+				// Only respond to initiator when thisDeviceId was a target
+				for (uint32_t deletedDelayId : deletedDelayIds) {
+					sendAck(packageId, commCtrl | (uint8_t)CommCtrl::waitBit, dataCtrl, operation, port, deletedDelayId);
+				}
+				// Final acknowleadge
 				sendAck(packageId, commCtrl, dataCtrl, operation, port, 0);
 			}
 			return;
