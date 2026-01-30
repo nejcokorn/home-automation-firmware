@@ -1,7 +1,7 @@
 #include <FlashEEPROM.h>
 #include <IWatchdog.h>
 #include "STM32_CAN.h"
-#include "STM32F103Rx.h"
+#include "STM32F103Rxv2.h"
 
 // Firmware
 // Version is defined as 00 <Mayor> <Minor> <Bugfix>
@@ -126,6 +126,7 @@ const int deviceAddressPins[] = { DEV_A1, DEV_A2, DEV_A3, DEV_A4, DEV_A5 };
 const int inputDigitalPins[]  = { DI_01, DI_02, DI_03, DI_04, DI_05, DI_06, DI_07, DI_08, DI_09, DI_10, DI_11, DI_12, DI_13, DI_14, DI_15, DI_16 };
 const int outputDigitalPins[] = { DO_01, DO_02, DO_03, DO_04, DO_05, DO_06, DO_07, DO_08, DO_09, DO_10, DO_11, DO_12 };
 const int configurationPins[] = { C_01, C_02 };
+// const int configurationPins[] = { C_01, C_02, C_03, C_04 };
 
 
 struct InputDigital {
@@ -1056,6 +1057,9 @@ void setup() {
 	// Compute DIP switches to get device id
 	thisDeviceId = computeDeviceAddress();
 
+	// Setup power led
+	pinMode(POWER_LED, OUTPUT);
+
 	// Setup digital inputs
 	for (int inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
 		// external pull-ups/downs as designed
@@ -1140,6 +1144,9 @@ void loop() {
 	// Calculate loop time
 	uint32_t loopTimeDiff = micros() - loopTimeLast;
 	loopTimeLast = micros();
+
+	// Blink to show process is running
+	digitalWrite(POWER_LED, (loopTime / 1000) % 2 == 0 ? true : false);
 
 	// Read and process CAN messages
 	CAN_message_t rx;
