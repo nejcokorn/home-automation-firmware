@@ -148,3 +148,116 @@ The STM32GPIO device has two sets of DIP Switches on board:
 * **A1..A5** - This DIP switch determines the **device ID**.
 * **C1..C4** - This DIP switch sets configuration option (1-4) for each config action.
 
+---
+
+## 4. Communication Rules
+
+1. Frames are always **8 bytes** with a 29-bit extended CAN ID. The **responderId** in the CAN ID decides who should reply.
+2. **Broadcast** uses `responderId = 0xFF` in the CAN ID. Only **Discovery** and **Ping** are expected to use broadcast; command/config frames are intended for unicast.
+3. **Discovery** requires broadcast; the response is an **Acknowledge** frame with `Data = thisDeviceId`.
+4. **Ping** may target a device or broadcast; the response is an **Acknowledge** frame with `Data = thisDeviceId` and `Port = 0`.
+5. **Command/Config** frames addressed to a device (`responderId == deviceId`) must return **Acknowledge** (`A=1`) or **Error** (`E=1`). Other devices do not reply, but may still observe the frame for informational delay tracking (see Notify).
+6. **Multi-frame responses** use the **Wait** bit (`W=1`) on every frame except the last. This is used for `listDelays` and for config action dumps.
+7. **Notify** frames (`N=1`) are informational. The firmware uses this flag to store non-executing delays on non-target devices; only the addressed responder replies.
+
+---
+
+## 5. Error Handling
+
+On processing failure, the Acknowledge frame (`A=1, E=1`) carries an error code in **Data**:
+
+| Code         | Meaning                 |
+| ------------ | ----------------------- |
+| 0x00000001   | Unknown error           |
+| 0x00000002   | Operation not allowed   |
+| 0x00000003   | Config not allowed      |
+| 0x00000004   | Invalid data type       |
+| 0x00000005   | Invalid port            |
+| 0x00000006   | Wrong address           |
+
+---
+
+## 6. Discovery
+
+### 6.1 Request (broadcast)
+
+```
+CAN ID = (commandId << 16) | (initiatorId << 8) | 0xFF
+CommCtrl: D=1 (others 0)
+DataCtrl: 0x00
+Port = 0
+Data = 0x00000000
+```
+
+### 6.2 Response (per device, unicast)
+
+```
+CAN ID = (same commandId) | (initiatorId << 8) | <deviceId>
+CommCtrl: D=1, A=1 (others 0)
+DataCtrl: 0x00
+Port = 0
+Data = <deviceId>
+```
+
+---
+
+## 7. Field Summary
+
+| Byte | Name     | Description                          |
+| ---- | -------- | ------------------------------------ |
+| B1   | CommCtrl | Bit-coded: `D P A E W N xx`          |
+| B2   | DataCtrl | Bit-coded: `C C S D TT xx`           |
+| B3   | Operation| Command/Config operation             |
+| B4   | Port     | `0–255` = port ID                    |
+| B5   | Data MSB | Data payload, most significant byte  |
+| B6   | Data     | Data payload                         |
+| B7   | Data     | Data payload                         |
+| B8   | Data LSB | Data payload, least significant byte |
+
+---
+
+## 8. Examples
+### 8.1 Ping / Pong
+**Ping request (unicast):**
+```
+CAN ID = (commandId << 16) | (initiatorId << 8) | <deviceId>
+CommCtrl: P=1
+DataCtrl: 0x00
+Operation = 0x00, Port = 0, Data = 0x00000000
+```
+**Pong response:**
+```
+CAN ID = (same commandId) | (initiatorId << 8) | <deviceId>
+CommCtrl: P=1, A=1
+DataCtrl: 0x00
+Operation = 0x00, Port = 0, Data = <deviceId>
+```
+
+### 8.2 Set output with delay (two-frame command)
+**Frame 1 (set + wait):**
+```
+CommCtrl: W=1
+DataCtrl: C=1, S=0 (digital), D=0 (output), TT=01 (byte)
+Operation = 0x01 (Set)
+Port = <outputPort>
+Data = <ActionType: 0=low,1=high,2=toggle,3=pwm>
+```
+**Frame 2 (delay, last):**
+```
+CommCtrl: W=0
+DataCtrl: C=1, S=0 (digital), D=0 (output), TT=10 (integer)
+Operation = 0x02 (Delay)
+Port = <outputPort>
+Data = <delayMs>
+```
+
+### 8.3 List delays response (multi-frame)
+Each delay entry returns five frames with `W=1`, followed by a final frame with `W=0`:
+```
+Port = <port>, Data = <delayId>
+Port = <port>, Data = <deviceId>
+Port = <port>, Data = <executeFlag 0|1>
+Port = <port>, Data = <ActionType>
+Port = <port>, Data = <remainingMs>
+Final frame: Port = 0xFF, Data = 0
+```
