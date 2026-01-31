@@ -50,7 +50,7 @@
 #define DO_12 PA_10
 
 // Configuration pins
-#define C_01 PB_7
-#define C_02 PB_6
+#define C_01 PB_6
+#define C_02 PB_7
 #define C_03 PC_10
 #define C_04 PA_15
