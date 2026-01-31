@@ -63,8 +63,8 @@ enum class ConfigOper: uint8_t {
 	actionClearDelays   = 0x07, // Action P4 clear all delays on all specified output ports (map)
 	actionDelay         = 0x08, // Action P5 delay in milliseconds
 	actionLongpress     = 0x09, // Action P6 longpress in milliseconds
-	bypassInstantly     = 0x0A, // Bypass Instantly
-	bypassOnDIPSwitch   = 0x0B, // Bypass determined by DIP switch
+	actionConfigSwitch  = 0x0A, // Action P7 Config switch
+	bypassInstantly     = 0x0B, // Bypass Instantly
 	bypassOnDisconnect  = 0x0C, // Bypass on disconnect in milliseconds
 	
 	writeEEPROM         = 0x7F, // Write all configuration into EEPROM
@@ -93,6 +93,7 @@ enum class ActionMode: uint8_t {
 
 // Sizes
 #define SIZE_DEVICE_ADDRESS  5
+#define SIZE_CONFIG_SWITCH   4
 #define SIZE_INPUT_DIGITAL   16
 #define SIZE_INPUT_ANALOG    4
 #define SIZE_OUTPUT_DIGITAL  12
@@ -125,8 +126,7 @@ uint8_t thisDeviceId = 0;
 const int deviceAddressPins[] = { DEV_A1, DEV_A2, DEV_A3, DEV_A4, DEV_A5 };
 const int inputDigitalPins[]  = { DI_01, DI_02, DI_03, DI_04, DI_05, DI_06, DI_07, DI_08, DI_09, DI_10, DI_11, DI_12, DI_13, DI_14, DI_15, DI_16 };
 const int outputDigitalPins[] = { DO_01, DO_02, DO_03, DO_04, DO_05, DO_06, DO_07, DO_08, DO_09, DO_10, DO_11, DO_12 };
-const int configurationPins[] = { C_01, C_02 };
-// const int configurationPins[] = { C_01, C_02, C_03, C_04 };
+const int configurationPins[] = { C_01, C_02, C_03, C_04 };
 
 
 struct InputDigital {
@@ -167,6 +167,7 @@ struct ActionItem {
 	uint16_t ports;
 	uint32_t delay;
 	uint32_t longpress;
+	uint8_t configSwitch;
 	// Internal tracking information
 	bool processClick;
 	bool processDoubleclick;
@@ -187,6 +188,7 @@ struct ActionItemEEPROM {
 	uint16_t ports;
 	uint32_t delay;
 	uint32_t longpress;
+	uint8_t configSwitch;
 };
 
 struct Command {
@@ -215,7 +217,6 @@ struct ConfigRegister {
 	int32_t debounce; // trigger in microseconds
 	int32_t doubleclick; // trigger in microseconds
 	bool bypassInstantly;
-	bool bypassOnDIPSwitch;
 	int32_t bypassOnDisconnect; // bypess after x miliseconds from last ping
 };
 
@@ -235,9 +236,6 @@ int32_t lastSyncRemote = 0;
 // TODO implement increment function
 uint32_t delayIdSequence = 1;
 
-// State of the DIP switch C_02
-bool dipSwitchBypass = false;
-
 // Device package sequence
 uint32_t commandIdSequence = 0;
 
@@ -249,7 +247,7 @@ static inline void u32ToBytes(uint32_t source, uint8_t* target) {
 	target[3] = (uint8_t)(source);
 }
 
-// Compute Device ID from DIP
+// Compute Device ID from Address DIP Switch
 static inline uint8_t computeDeviceAddress() {
 	uint8_t id = 0;
 	for (int pin = 0; pin < SIZE_DEVICE_ADDRESS; pin++) {
@@ -258,6 +256,16 @@ static inline uint8_t computeDeviceAddress() {
 		id |= ((digitalRead(deviceAddressPins[pin]) == LOW) ? 1 : 0) << pin;
 	}
 	return id;
+}
+
+// Compute Config DIP Switch
+static inline uint8_t computeConfigSwitch() {
+	uint8_t configSwitch = 0;
+	for (int pin = 0; pin < SIZE_CONFIG_SWITCH; pin++) {
+		// LOW means switch ON -> bit=1
+		configSwitch |= ((digitalRead(configurationPins[pin]) == LOW) ? 1 : 0) << pin;
+	}
+	return configSwitch;
 }
 
 static inline uint32_t nextPackageId(uint8_t initiatorId, uint8_t responderId) {
@@ -412,6 +420,7 @@ void resetActionItem(uint16_t idx) {
 	actionItems[idx].ports                 = 0;
 	actionItems[idx].delay                 = 0;
 	actionItems[idx].longpress             = 0;
+	actionItems[idx].configSwitch          = 0;
 	actionItems[idx].processClick          = false;
 	actionItems[idx].processDoubleclick    = false;
 	actionItems[idx].processLongpress      = false;
@@ -426,7 +435,6 @@ void resetConfig() {
 		config.debounce            = 0;
 		config.doubleclick         = 0;
 		config.bypassInstantly     = false;
-		config.bypassOnDIPSwitch   = false;
 		config.bypassOnDisconnect  = 0;
 		inputConfig[inputPort] = config;
 	}
@@ -465,6 +473,7 @@ uint32_t saveConfig() {
 		actionItemEEPROM.ports                 = actionItems[i].ports;
 		actionItemEEPROM.delay                 = actionItems[i].delay;
 		actionItemEEPROM.longpress             = actionItems[i].longpress;
+		actionItemEEPROM.configSwitch          = actionItems[i].configSwitch;
 
 		EEPROM.put(EEPROMPointer, actionItemEEPROM);
 		EEPROMPointer += sizeof(actionItemEEPROM);
@@ -506,6 +515,7 @@ void readConfig() {
 		actionItems[i].ports                 = actionItemEEPROM.ports;
 		actionItems[i].delay                 = actionItemEEPROM.delay;
 		actionItems[i].longpress             = actionItemEEPROM.longpress;
+		actionItems[i].configSwitch          = actionItemEEPROM.configSwitch;
 	}
 }
 
@@ -544,6 +554,10 @@ void updateActionDelay(uint32_t delay) {
 
 void updateActionLongpress(uint32_t longpress) {
 	tempActionItem->longpress = longpress;
+}
+
+void updateActionConfigSwitch(uint8_t configSwitch) {
+	tempActionItem->configSwitch = configSwitch;
 }
 
 Command& getCommand(uint32_t packageId){
@@ -803,11 +817,11 @@ void canProcessFrame(const CAN_message_t& rx) {
 				case ConfigOper::actionLongpress:
 					updateActionLongpress(data);
 					break;
+				case ConfigOper::actionConfigSwitch:
+					updateActionConfigSwitch(data);
+					break;
 				case ConfigOper::bypassInstantly:
 					inputConfig[port].bypassInstantly = data > 0;
-					break;
-				case ConfigOper::bypassOnDIPSwitch:
-					inputConfig[port].bypassOnDIPSwitch = data > 0;
 					break;
 				case ConfigOper::bypassOnDisconnect:
 					inputConfig[port].bypassOnDisconnect = data;
@@ -881,6 +895,14 @@ void canProcessFrame(const CAN_message_t& rx) {
 								(uint8_t)ConfigOper::actionLongpress,
 								port,
 								actionItems[i].longpress);
+							
+							// P7 - action config switch
+							sendAck(packageId,
+								commCtrl | (uint8_t)CommCtrl::waitBit,
+								(uint8_t)DataCtrl::configBit,
+								(uint8_t)ConfigOper::actionConfigSwitch,
+								port,
+								actionItems[i].configSwitch);
 						}
 					}
 					// Send empty package without waitBit
@@ -888,9 +910,6 @@ void canProcessFrame(const CAN_message_t& rx) {
 					return;
 				case ConfigOper::bypassInstantly:
 					confData = inputConfig[port].bypassInstantly ? 1 : 0;
-					break;
-				case ConfigOper::bypassOnDIPSwitch:
-					confData = inputConfig[port].bypassOnDIPSwitch ? 1 : 0;
 					break;
 				case ConfigOper::bypassOnDisconnect:
 					confData = inputConfig[port].bypassOnDisconnect;
@@ -1066,7 +1085,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 
 // Main function to setup stm32
 void setup() {
-	// Compute DIP switches to get device id
+	// Compute Address DIP switch to get device id
 	thisDeviceId = computeDeviceAddress();
 
 	// Setup power led
@@ -1116,7 +1135,7 @@ void setup() {
 	}
 
 	// Setup configuration pins
-	for (int pin = 0; pin < 2; pin++) {
+	for (int pin = 0; pin < SIZE_CONFIG_SWITCH; pin++) {
 		pinMode(configurationPins[pin], INPUT_PULLUP);
 	}
 
@@ -1136,7 +1155,7 @@ void setup() {
 	}
 
 	// Read configuration pins
-	uint32_t canBaudRate = digitalRead(C_01) == LOW ? 1000000 : 500000;
+	uint32_t canBaudRate = 500000;
 
 	// Initialize CAN 
 	Can1.begin();
@@ -1166,8 +1185,8 @@ void loop() {
 		canProcessFrame(rx);
 	}
 
-	// Read bypass config every loop
-	dipSwitchBypass = digitalRead(C_02) == LOW ? true : false;
+	// Compute config switch every loop
+	uint8_t configSwitch = computeConfigSwitch();
 
 	// Scan inputs and detect changes (for potential push events/actions)
 	for (int inputPort = 0; inputPort < SIZE_INPUT_DIGITAL; inputPort++) {
@@ -1176,8 +1195,7 @@ void loop() {
 		
 		// Calculate bypass criteria
 		inputDigitals[inputPort].bypass = inputConfig[inputPort].bypassInstantly == true
-				|| inputConfig[inputPort].bypassOnDisconnect != 0 && loopTime - lastSyncRemote > inputConfig[inputPort].bypassOnDisconnect
-				|| dipSwitchBypass && inputConfig[inputPort].bypassOnDIPSwitch == true;
+				|| inputConfig[inputPort].bypassOnDisconnect != 0 && loopTime - lastSyncRemote > inputConfig[inputPort].bypassOnDisconnect;
 
 		if (inputConfig[inputPort].debounce == 0) {
 			// Without debounce logic
@@ -1217,6 +1235,10 @@ void loop() {
 			if (inputDigitals[inputPort].bypass) {
 				// Loop actions
 				for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+					// Action configSwitch required
+					if (!(actionItems[gridDevIdx].configSwitch == 0 || configSwitch & (1 << (actionItems[gridDevIdx].configSwitch - 1)))) {
+						continue;
+					}
 					if (actionItems[gridDevIdx].deviceId != 0xFF && actionItems[gridDevIdx].inputPort == inputPort) {
 						// Make sure trigger matches action trigger
 						if ((actionItems[gridDevIdx].trigger == ActionTrigger::rising && inputDigitals[inputPort].value == HIGH) || (actionItems[gridDevIdx].trigger == ActionTrigger::falling && inputDigitals[inputPort].value == LOW)){
@@ -1253,12 +1275,18 @@ void loop() {
 		}
 	}
 
-	// Bypass actions on double click
 	for (uint16_t gridDevIdx = 0; gridDevIdx < SIZE_ACTION_MAP; gridDevIdx++) {
+		// Action configSwitch required
+		if (!(actionItems[gridDevIdx].configSwitch == 0 || configSwitch & (1 << (actionItems[gridDevIdx].configSwitch - 1)))) {
+			continue;
+		}
+		
+		// Action validity and input bypass
 		if (actionItems[gridDevIdx].deviceId == 0xFF || !inputDigitals[actionItems[gridDevIdx].inputPort].bypass) {
 			continue;
 		}
-
+		
+		// Bypass actions on double click
 		if (actionItems[gridDevIdx].processDoubleclick == true
 			&& actionItems[gridDevIdx].mode == ActionMode::doubleclick
 			&& actionItems[gridDevIdx].clickTime - actionItems[gridDevIdx].previousClickTime < inputConfig[actionItems[gridDevIdx].inputPort].doubleclick
