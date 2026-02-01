@@ -1314,9 +1314,6 @@ void loop() {
 		) { // Only when click needs processing
 			if (inputConfig[actionItems[gridDevIdx].inputPort].doubleclick == 0 // No double click configured - continue to process click
 				|| (
-					// If still pressed after portion of the double click time, consider it as single click
-					loopTime - actionItems[gridDevIdx].clickTime > inputConfig[actionItems[gridDevIdx].inputPort].doubleclick * 0.6
-				) || (
 					// Wait full time, possible double click
 					loopTime - actionItems[gridDevIdx].clickTime > inputConfig[actionItems[gridDevIdx].inputPort].doubleclick
 				)
