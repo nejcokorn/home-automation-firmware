@@ -5,7 +5,7 @@
 
 // Firmware
 // Version is defined as 00 <Mayor> <Minor> <Bugfix>
-#define FIRMWARE_VERSION  0x00010201UL
+#define FIRMWARE_VERSION  0x00010202UL
 
 // Communication control byte
 enum class CommCtrl: uint8_t {
@@ -1157,8 +1157,8 @@ void setup() {
 	// Read configuration pins
 	uint32_t canBaudRate = 500000;
 
-	// Initialize CAN 
-	Can1.begin();
+	// Initialize CAN, enable retransmission and set baudrate 
+	Can1.begin(true);
 	Can1.setBaudRate(canBaudRate);
 
 	// Initialize the IWDG with 5 seconds timeout.
