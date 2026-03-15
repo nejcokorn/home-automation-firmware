@@ -1063,7 +1063,7 @@ void canProcessFrame(const CAN_message_t& rx) {
 				// Set output value, for now this covers all dataTypes except decimals
 				if (command.isBit || command.isByte || command.isInteger) {
 					// Write new value to output port
-					setDigitalOutput(command.port, (ActionType)data);
+					setDigitalOutput(command.port, command.type);
 				} else {
 					// Cleanup and respond with an error
 					removeCommand(command);
