@@ -1025,12 +1025,15 @@ void canProcessFrame(const CAN_message_t& rx) {
 			command.isSet = isSet;
 			command.isDigital = isDigital;
 			command.isAnalog = isAnalog;
+			command.isInput = isInput;
 			command.isOutput = isOutput;
 			command.isBit = isBit;
 			command.isByte = isByte;
 			command.isInteger = isInteger;
 			command.isDecimal = isDecimal;
 			command.port = port;
+			command.delay = 0;
+			command.extra = 0;
 			command.type = (ActionType)data;
 		} else if (isDelay) {
 			// Command has to match on port, digital/analog, input/output otherwise remove command
