@@ -572,6 +572,7 @@ Command& getCommand(uint32_t packageId){
 	// Reserve a slot in the stack of commands
 	for (uint8_t idx = 0; idx < SIZE_COMMANDS; idx++) {
 		if (commands[idx].active == false) {
+			commands[idx] = Command{};
 			commands[idx].commandTime = millis();
 			commands[idx].packageId = packageId;
 			commands[idx].active = true;
@@ -586,6 +587,7 @@ Command& getCommand(uint32_t packageId){
 			oldestIdx = idx;
 		}
 	}
+	commands[oldestIdx] = Command{};
 	commands[oldestIdx].commandTime = millis();
 	commands[oldestIdx].packageId = packageId;
 	commands[oldestIdx].active = true;
