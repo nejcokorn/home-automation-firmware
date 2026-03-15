@@ -5,7 +5,7 @@
 
 // Firmware
 // Version is defined as 00 <Mayor> <Minor> <Bugfix>
-#define FIRMWARE_VERSION  0x00010202UL
+#define FIRMWARE_VERSION  0x00010203UL
 
 // Communication control byte
 enum class CommCtrl: uint8_t {
