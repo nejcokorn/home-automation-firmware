@@ -359,7 +359,7 @@ void setDelay(uint8_t deviceId, uint8_t port, ActionType type, uint32_t delay, b
 		if (!delays[delayIdx].active) {
 			delays[delayIdx].id = delayIdSequence++;
 			delays[delayIdx].active = true;
-			delays[delayIdx].execute = true;
+			delays[delayIdx].execute = execute;
 			delays[delayIdx].deviceId = deviceId;
 			delays[delayIdx].port = port;
 			delays[delayIdx].type = type;
