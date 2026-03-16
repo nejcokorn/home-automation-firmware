@@ -939,6 +939,12 @@ void canProcessFrame(const CAN_message_t& rx) {
 		bool isClearDelayById   = operation == (uint8_t)CommandOper::clearDelayById;
 		bool isClearDelayByPort = operation == (uint8_t)CommandOper::clearDelayByPort;
 
+		if (isAcknowledge) {
+			// Do not process.
+			// TODO - remove command from stack if acknowledge received for the command
+			return;
+		}
+
 		if (isClearDelayById) {
 			bool delayCleard = false;
 			if (port == 0xFF) {
