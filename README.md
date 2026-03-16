@@ -89,7 +89,7 @@ The **receiver ID** is not included in the payload; it is encoded in the **CAN i
   * **TT (Data Type)**:
     * `00 = Bit`.
     * `01 = Byte (8-bit)`.
-    * `10 = Integer (32-bit)`, `When D = 0 and B4 != 0, data represent delay low in miliseconds`.
+    * `10 = Integer (32-bit)`.
     * `11 = Float`.
   * **X (Reserved)**: set to `0`.
   * **X (Reserved)**: set to `0`.
