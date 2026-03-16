@@ -1,3 +1,31 @@
+# Falshing new firmware to the Home Automation device
+## Download Firmware
+Download firmware from [home-automation-firmware](https://github.com/nejcokorn/home-automation-firmware/releases)
+```bash
+curl -fL -O https://github.com/nejcokorn/home-automation-firmware/releases/download/v1.2.3/home-automation-firmware.ino.bin
+```
+
+## Instal stlink tools
+```bash
+apt-get install -y stlink-tools
+```
+
+# Create udev rule for ST-Link
+```bash
+echo 'ATTRS{idVendor}=="0483", MODE="0666"' | tee /etc/udev/rules.d/49-stlinkv2.rules > /dev/null
+```
+
+# Reload udev rules
+```bash
+udevadm control --reload-rules
+udevadm trigger
+```
+
+## Flash Home Automation device
+```bash
+st-flash write home-automation-firmware.ino.bin 0x08000000
+```
+
 # CAN Communication Protocol
 
 ## 1. CAN Identifier
@@ -89,7 +117,7 @@ The **receiver ID** is not included in the payload; it is encoded in the **CAN i
   * **TT (Data Type)**:
     * `00 = Bit`.
     * `01 = Byte (8-bit)`.
-    * `10 = Integer (32-bit)`.
+    * `10 = Integer (32-bit)`, `When D = 0 and B4 != 0, data represent delay low in miliseconds`.
     * `11 = Float`.
   * **X (Reserved)**: set to `0`.
   * **X (Reserved)**: set to `0`.
