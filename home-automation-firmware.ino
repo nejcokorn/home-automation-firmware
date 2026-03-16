@@ -1048,7 +1048,9 @@ void canProcessFrame(const CAN_message_t& rx) {
 		// Add informational delay for other devices
 		if (responderId != thisDeviceId) {
 			if (!isWait && command.isSet && command.delay > 0) {
-				bool execute = command.isNotify == true ? false : true;
+				// TODO - expand functionality to allow execution of command on other devices after delay, for now just send informational delay without execution
+				// bool execute = command.isNotify == true ? false : true;
+				bool execute = false;
 				setDelay(responderId, command.port, command.type, command.delay, execute);
 			}
 			return;
